@@ -94,7 +94,7 @@ export default function RunwaySandbox({ idea, onClose }: RunwayProps) {
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "1rem" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-4">
         
         {/* Sliders Panel */}
         <div style={{ background: "#0c0c0c", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem" }}>
@@ -170,7 +170,7 @@ export default function RunwaySandbox({ idea, onClose }: RunwayProps) {
               />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Average order price */}
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>

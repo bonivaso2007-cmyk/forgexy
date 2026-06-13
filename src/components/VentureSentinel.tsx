@@ -265,7 +265,7 @@ FOUNDER DEFENSE SUBMISSION:
       </div>
 
       {/* Metrics Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.75rem", marginBottom: "1.5rem" }}>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         
         <div style={{ background: "#0c0c0c", border: "1px solid #151515", borderRadius: "6px", padding: "0.8rem", textAlign: "center" }}>
           <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "8px", letterSpacing: "1px", textTransform: "uppercase", fontFamily: "monospace" }}>Chrono-Alignment</div>
@@ -289,7 +289,7 @@ FOUNDER DEFENSE SUBMISSION:
 
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: "1.2rem" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5">
         
         {/* Workspace Block */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>

@@ -257,7 +257,7 @@ export default function WarRoom({ idea, profile, swotData, onClose }: WarRoomPro
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.80rem", marginBottom: "1.8rem" }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
           <div>
             <label style={{ color: "rgba(255,255,255,0.4)", fontSize: "9px", textTransform: "uppercase", display: "block", marginBottom: "0.4rem" }}>Your Name</label>
             <input 
@@ -338,7 +338,7 @@ export default function WarRoom({ idea, profile, swotData, onClose }: WarRoomPro
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: "1.2rem", position: "relative" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5 relative">
         
         {/* Workspace Panel */}
         <div 
@@ -364,7 +364,7 @@ export default function WarRoom({ idea, profile, swotData, onClose }: WarRoomPro
             <span style={{ color: LIME, fontSize: "9px" }}>● MULTIPLAYER STATE ENFORCED</span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.2rem" }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
             {/* Strengths */}
             <div style={{ background: "rgba(200, 255, 0, 0.02)", border: "1px solid rgba(200, 255, 0, 0.1)", borderRadius: "6px", padding: "0.85rem" }}>
               <span style={{ color: LIME, fontSize: "9px", fontWeight: "bold", letterSpacing: "1px" }}>STRENGTHS</span>

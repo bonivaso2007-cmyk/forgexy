@@ -154,7 +154,7 @@ export default function MarketLandscape({ idea, profile, onClose }: LandscapePro
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: "1rem" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
         
         {/* Responsive Coordinate Map Stage */}
         <div style={{ background: "#0a0a0a", border: "1px solid #1c1c1c", borderRadius: "8px", overflow: "hidden", position: "relative", minHeight: "380px" }}>

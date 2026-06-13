@@ -4,6 +4,7 @@ import PitchDeck from "./components/PitchDeck";
 import MarketLandscape from "./components/MarketLandscape";
 import RunwaySandbox from "./components/RunwaySandbox";
 import VentureSentinel from "./components/VentureSentinel";
+import CoFounderHub from "./components/CoFounderHub";
 
 const API = "/api/ai-proxy";
 const MODEL = "gemini-3.5-flash";
@@ -1281,6 +1282,7 @@ export default function App() {
   const [showLandscape, setShowLandscape] = useState(false);
   const [showRunway, setShowRunway] = useState(false);
   const [showSentinel, setShowSentinel] = useState(false);
+  const [showCoFounderHub, setShowCoFounderHub] = useState(false);
   const [showAuthGateway, setShowAuthGateway] = useState(false);
   const [guestAuthOpen, setGuestAuthOpen] = useState(false);
   const [guestIgnitions, setGuestIgnitions] = useState<string[]>(() => {
@@ -1623,9 +1625,17 @@ export default function App() {
       {showHistory && <HistoryPanel uid={user?.uid} onLoad={loadIdea} onClose={() => setShowHistory(false)} />}
 
       {showSentinel && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(5,5,5,0.98)", zIndex: 9999, overflowY: "auto", padding: "2rem", boxSizing: "border-box" }}>
-          <div style={{ maxWidth: "1200px", margin: "0 auto", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem" }}>
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <VentureSentinel idea={idea} profile={profile} onClose={() => setShowSentinel(false)} />
+          </div>
+        </div>
+      )}
+
+      {showCoFounderHub && (
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
+            <CoFounderHub idea={idea} profile={profile} onClose={() => setShowCoFounderHub(false)} />
           </div>
         </div>
       )}
@@ -1696,29 +1706,29 @@ export default function App() {
       )}
 
       {showWarRoom && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(5,5,5,0.98)", zIndex: 9999, overflowY: "auto", padding: "2rem", boxSizing: "border-box" }}>
-          <div style={{ maxWidth: "1200px", margin: "0 auto", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem" }}>
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <WarRoom idea={idea} profile={profile} swotData={(outputs as any).swot} onClose={() => setShowWarRoom(false)} />
           </div>
         </div>
       )}
       {showPitchDeck && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(5,5,5,0.98)", zIndex: 9999, overflowY: "auto", padding: "2rem", boxSizing: "border-box" }}>
-          <div style={{ maxWidth: "1200px", margin: "0 auto", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem" }}>
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <PitchDeck idea={idea} profile={profile} blueprintData={(outputs as any).blueprint} businessPlanData={(outputs as any).businessplan} onClose={() => setShowPitchDeck(false)} />
           </div>
         </div>
       )}
       {showLandscape && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(5,5,5,0.98)", zIndex: 9999, overflowY: "auto", padding: "2rem", boxSizing: "border-box" }}>
-          <div style={{ maxWidth: "1200px", margin: "0 auto", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem" }}>
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <MarketLandscape idea={idea} profile={profile} onClose={() => setShowLandscape(false)} />
           </div>
         </div>
       )}
       {showRunway && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(5,5,5,0.98)", zIndex: 9999, overflowY: "auto", padding: "2rem", boxSizing: "border-box" }}>
-          <div style={{ maxWidth: "1200px", margin: "0 auto", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem" }}>
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <RunwaySandbox idea={idea} onClose={() => setShowRunway(false)} />
           </div>
         </div>
@@ -2003,6 +2013,37 @@ export default function App() {
                 <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>📊</div>
                 <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Runway COGS Sandbox</div>
                 <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Model burns, margins, headcounts & 12M cash graphs</div>
+              </div>
+
+              {/* CO-FOUNDER CO-PILOT DECK — Living Memory companion */}
+              <div 
+                className="outcard" 
+                style={{ 
+                  background: "rgba(200, 255, 0, 0.05)", 
+                  border: "1px solid rgba(200, 255, 0, 0.35)", 
+                  borderRadius: "6px", 
+                  padding: "1.2rem", 
+                  cursor: "pointer", 
+                  transition: "all .18s", 
+                  position: "relative",
+                  gridColumn: "span 2",
+                  boxShadow: "0 0 15px rgba(200, 255, 0, 0.1)"
+                }}
+                onClick={() => setShowCoFounderHub(true)}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: "0.85rem", alignItems: "center" }}>
+                    <span style={{ fontSize: "1.95rem" }}>🛰️</span>
+                    <div>
+                      <div style={{ color: LIME, fontSize: "9px", fontWeight: "900", letterSpacing: "2.2px", fontFamily: "monospace" }}>LIVING WORKSPACE COMPANION</div>
+                      <div style={{ color: "#ffffff", fontSize: "0.88rem", fontWeight: "900", fontFamily: "monospace" }}>CO-FOUNDER CO-PILOT COMMAND DECK</div>
+                      <div style={{ color: "rgba(255,255,255,0.48)", fontSize: "0.68rem", fontFamily: "monospace", marginTop: "2px", lineHeight: "1.3" }}>
+                        Active advisory memory-links, customized investor rooms, cold outreach matchmakers, metric traction visuals & Swahili support translation.
+                      </div>
+                    </div>
+                  </div>
+                  <span style={{ color: LIME, fontSize: "10px", fontWeight: "900", animation: "pulse 1.8s infinite" }}>● ACTIVE COMPANION</span>
+                </div>
               </div>
 
               {/* Venture Sentinel — Autonomous AI from 2100 */}

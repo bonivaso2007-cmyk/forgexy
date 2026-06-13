@@ -385,7 +385,7 @@ export default function PitchDeck({ idea, profile, blueprintData, businessPlanDa
       {slides.length === 0 ? (
         <div style={{ padding: "4rem 0", textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: "11px" }}>Assembling presentation canvas...</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "1rem" }}>
+        <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-4">
           
           {/* Slide Deck Catalog Directory */}
           <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", background: "#0c0c0c", border: "1px solid #1c1c1c", padding: "0.65rem", borderRadius: "8px", maxHeight: "400px", overflowY: "auto" }}>
@@ -413,7 +413,7 @@ export default function PitchDeck({ idea, profile, blueprintData, businessPlanDa
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             
             {/* Slide Body Stage */}
-            <div style={{ background: theme.bg, border: theme.border, borderRadius: "8px", padding: "2rem", minHeight: "310px", display: "grid", gridTemplateColumns: "1fr 180px", gap: "1.5rem", position: "relative" }}>
+            <div className="p-4 sm:p-8 min-h-[310px] grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-6 relative" style={{ background: theme.bg, border: theme.border, borderRadius: "8px" }}>
               <div style={{ display: "flex", flexDirection: "column", alignSelf: "center", width: "100%" }}>
                 {/* Editable Title */}
                 <input 
@@ -502,7 +502,7 @@ export default function PitchDeck({ idea, profile, blueprintData, businessPlanDa
           </div>
 
           {/* Core Body Container */}
-          <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 240px", gap: "3rem", alignItems: "center" }}>
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-[1fr_240px] gap-6 items-center">
             <div style={{ textAlign: "left" }}>
               <h1 style={{ color: "#fff", fontSize: "2.5rem", fontWeight: "900", fontFamily: "monospace", marginBottom: "1rem", letterSpacing: "-0.5px" }}>{slides[activeSlideIdx].title}</h1>
               <p style={{ color: theme.mutedText, fontSize: "1.2rem", fontFamily: "monospace", lineHeight: "1.6", marginBottom: "2.5rem" }}>{slides[activeSlideIdx].subtitle}</p>
