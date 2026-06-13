@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   Brain, ShieldCheck, Mail, Users, Award, Globe, 
   TrendingUp, Download, Eye, Send, RotateCw, Plus, 
-  Volume2, Sparkles, AlertCircle, FileText, CheckCircle2 
+  Volume2, Sparkles, AlertCircle, FileText, CheckCircle2,
+  Phone, PhoneOff, Mic, MicOff
 } from "lucide-react";
 
 // Conforming to Forge aesthetic styling
@@ -25,7 +26,7 @@ export default function CoFounderHub({ idea, profile, onClose, onQuestPointsEarn
   const [lang, setLang] = useState<"en" | "sw">("en");
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<"co-pilot" | "data-room" | "outreach" | "discovery" | "progress" | "traction">("co-pilot");
+  const [activeTab, setActiveTab] = useState<"co-pilot" | "live-call" | "data-room" | "outreach" | "discovery" | "progress" | "traction">("co-pilot");
 
   // 1. Co-founder Advisory State
   const [memories, setMemories] = useState<string[]>(() => {
@@ -132,6 +133,96 @@ export default function CoFounderHub({ idea, profile, onClose, onQuestPointsEarn
   const [whatsAppConfigured, setWhatsAppConfigured] = useState(false);
   const [simulatedAlerts, setSimulatedAlerts] = useState<string[]>([]);
 
+  // 7. Realistic Voice & Live Call Room State
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [callStatus, setCallStatus] = useState<"disconnected" | "connecting" | "connected" | "listening" | "speaking" | "muted">("disconnected");
+  const [isMuted, setIsMuted] = useState(false);
+  const [callDuration, setCallDuration] = useState(0);
+  const [callHistory, setCallHistory] = useState<{ sender: "user" | "ai"; text: string }[]>([]);
+  const [manualCallInput, setManualCallInput] = useState("");
+  const [loadingCallResponse, setLoadingCallResponse] = useState(false);
+
+  const recognitionRef = useRef<any>(null);
+  const durationTimerRef = useRef<any>(null);
+
+  // Load and pre-filter premium female speech voices on render
+  useEffect(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      const loadVoices = () => {
+        const availableVoices = window.speechSynthesis.getVoices();
+        setVoices(availableVoices);
+        
+        // Find best default female voice
+        const femaleKeywords = [
+          "google us english", 
+          "samantha", 
+          "zira",
+          "microsoft zira",
+          "hazel", 
+          "susan", 
+          "fiona", 
+          "salli", 
+          "joanna", 
+          "victoria"
+        ];
+        let found = availableVoices.find(v => 
+          femaleKeywords.some(keyword => v.name.toLowerCase().includes(keyword))
+        );
+        if (!found) {
+          found = availableVoices.find(v => {
+            const name = v.name.toLowerCase();
+            return v.lang.startsWith("en") && (
+              name.includes("female") || name.includes("woman") || name.includes("girl") || 
+              name.includes("zira") || name.includes("siri") || name.includes("samantha") || name.includes("hazel")
+            );
+          });
+        }
+        if (!found) {
+          found = availableVoices.find(v => v.lang.startsWith("en"));
+        }
+        if (found) {
+          setSelectedVoiceName(found.name);
+        } else if (availableVoices.length > 0) {
+          setSelectedVoiceName(availableVoices[0].name);
+        }
+      };
+      
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, []);
+
+  // Update Call Duration Counter
+  useEffect(() => {
+    if (isCallActive && callStatus !== "disconnected") {
+      durationTimerRef.current = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+      }
+    }
+    return () => {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+      }
+    };
+  }, [isCallActive, callStatus]);
+
+  // Handle SpeechRecognition instance cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+    };
+  }, []);
+
   // Local storage writers
   useEffect(() => {
     localStorage.setItem("forge_founder_xp", xp.toString());
@@ -159,6 +250,7 @@ export default function CoFounderHub({ idea, profile, onClose, onQuestPointsEarn
       title: { en: "CO-FOUNDER COMMAND DECK", sw: "KITUO CHA MWANZILISHI MWENZI" },
       subtitle: { en: "Autonomous Memory-Link & Acceleration Suite", sw: "Muunganisho Wa Kumbukumbu Na Kituo Cha Kukuza Startup" },
       brainTab: { en: "CO-PILOT BRAIN", sw: "BONGO LA MWENZI" },
+      liveCallTab: { en: "📞 LIVE CO-FOUNDER CALL", sw: "📞 PIGA SIMU" },
       dataRoomTab: { en: "DATA ROOM", sw: "CHUMBA CHA DATA" },
       outreachTab: { en: "MATCHMAKER", sw: "MKUTANISHAJI" },
       discoveryTab: { en: "DISCOVERY SIM", sw: "MIGAMBO YA MIJADALA" },
@@ -234,14 +326,43 @@ Write a brief (max 180 words), encouraging yet highly operational daily strategi
     }
   };
 
+  // Speak with realistic female voice helper
+  const speakWithRealisticFemaleVoice = (text: string, onStart?: () => void, onEnd?: () => void) => {
+    if (!('speechSynthesis' in window)) {
+      if (onEnd) onEnd();
+      return;
+    }
+    const synth = window.speechSynthesis;
+    synth.cancel(); // cancel any active speaking
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Choose active high-quality female voice
+    if (selectedVoiceName) {
+      const v = voices.find(voice => voice.name === selectedVoiceName);
+      if (v) utterance.voice = v;
+    }
+
+    // Tune voice to sound realistic, gentle, and soft
+    utterance.pitch = 1.05; // slightly higher/warmer pitch
+    utterance.rate = 0.94;  // slightly slower for calm, natural cadence
+    utterance.volume = 1.0;
+
+    if (onStart) utterance.onstart = onStart;
+    utterance.onend = () => { if (onEnd) onEnd(); };
+    utterance.onerror = () => { if (onEnd) onEnd(); };
+
+    synth.speak(utterance);
+  };
+
   // B. Synthesis Briefing Audio (Founder Mode Audio Briefing)
   const synthesizeDailyBriefing = async () => {
     setSynthesizingBriefing(true);
     setPlayingBriefing(false);
     setBriefingText("");
 
-    const sys = "You are an elite, concise growth officer from Silicon Valley briefing your startup founder before a major pivot.";
-    const user = `Give a 45-second energetic oral update.
+    const sys = "You are an elite, concise cofounder growth officer briefing your startup founder. Speak in a natural, ultra-supportive yet realistic female voice.";
+    const user = `Give a concise energetic oral update.
 Startup: "${idea}"
 Runway Context: self-funded, stage: ${profile?.stage}.
 Keep it incredibly epic, stating current runway expectations, daily MVP tasks, and dynamic motivation. Avoid long intros. Max 80 words spoken directly.`;
@@ -254,36 +375,19 @@ Keep it incredibly epic, stating current runway expectations, daily MVP tasks, a
       });
       if (!res.ok) throw new Error();
       const text = await res.json();
-      // Since SSE stream sends delta chunks, let's extract or call regular
       let cleanText = text?.delta?.text || "";
       if (!cleanText) {
-        // Fallback fallback simulated parsing
         cleanText = `Founder, layout report on standard telemetry is complete. We need high velocity. Today's focus is direct customer outreach. Accelerate MVP execution before the cash runway contracts. Let's make it happen.`;
       }
       setBriefingText(cleanText);
 
-      // Attempt text-to-speech if Web Speech Synthesis API is available
-      if ('speechSynthesis' in window) {
-        setPlayingBriefing(true);
-        const synth = window.speechSynthesis;
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.rate = 1.05;
-        utterance.pitch = 0.95;
-        utterance.onend = () => setPlayingBriefing(false);
-        synth.speak(utterance);
-      } else {
-        alert("Audio synthesis simulated successfully! Speech Synthesis API not fully responsive in this container iframe configuration.");
-      }
+      setPlayingBriefing(true);
+      speakWithRealisticFemaleVoice(cleanText, undefined, () => setPlayingBriefing(false));
     } catch {
-      // Fallback
       const fallback = `Daily update active: Establish direct customer checks. Pivot pricing metrics to sustain survival. Focus all engineering efforts entirely on proving the primary value statement now.`;
       setBriefingText(fallback);
-      if ('speechSynthesis' in window) {
-        setPlayingBriefing(true);
-        const utterance = new SpeechSynthesisUtterance(fallback);
-        utterance.onend = () => setPlayingBriefing(false);
-        window.speechSynthesis.speak(utterance);
-      }
+      setPlayingBriefing(true);
+      speakWithRealisticFemaleVoice(fallback, undefined, () => setPlayingBriefing(false));
     } finally {
       setSynthesizingBriefing(false);
     }
@@ -294,6 +398,204 @@ Keep it incredibly epic, stating current runway expectations, daily MVP tasks, a
       window.speechSynthesis.cancel();
     }
     setPlayingBriefing(false);
+  };
+
+  // --- LIVE TWO-WAY VOICE CALL HANDLERS ---
+  const startLiveCall = async () => {
+    // End any current briefing speech
+    stopBriefing();
+
+    setCallStatus("connecting");
+    setIsCallActive(true);
+    setCallDuration(0);
+    setCallHistory([
+      { sender: "ai", text: `Calling your co-founder AI... Connected.` }
+    ]);
+
+    const greeting = `Hey! Good to speak with you directly. I was just reviewing the business model for our concept, "${idea}". Tell me, what strategic pivot or immediate milestone are we tackling right now?`;
+    
+    // Animate connecting state briefly
+    setTimeout(() => {
+      setCallStatus("speaking");
+      setCallHistory(prev => [...prev, { sender: "ai", text: greeting }]);
+      speakWithRealisticFemaleVoice(greeting, undefined, () => {
+        setCallStatus("listening");
+        startListeningForUserSpeech();
+      });
+    }, 1500);
+  };
+
+  const startListeningForUserSpeech = () => {
+    if (isMuted || !isCallActive) return;
+    
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = lang === "sw" ? "sw-KE" : "en-US";
+
+      rec.onstart = () => {
+        setCallStatus("listening");
+      };
+
+      rec.onresult = async (event: any) => {
+        const transcriptText = event.results[0][0].transcript;
+        if (!transcriptText || !transcriptText.trim()) return;
+
+        // Add user transcript to history
+        setCallHistory(prev => [...prev, { sender: "user", text: transcriptText }]);
+        
+        // Fetch conversational response
+        await getAIResponseForCall(transcriptText);
+      };
+
+      rec.onerror = (e: any) => {
+        console.warn("SpeechRecognition error:", e);
+        // If it was silent or timed out, and we are still active and listening, restart
+        if (isCallActive && callStatus === "listening") {
+          setTimeout(() => {
+            if (isCallActive && callStatus === "listening") {
+              startListeningForUserSpeech();
+            }
+          }, 1200);
+        }
+      };
+
+      rec.onend = () => {
+        // Automatically restart speech recognition loop to allow fluid back-and-forth
+        if (isCallActive && callStatus === "listening") {
+          setTimeout(() => {
+            if (isCallActive && callStatus === "listening") {
+              startListeningForUserSpeech();
+            }
+          }, 800);
+        }
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (e) {
+      console.error("Speech recognition startup failure:", e);
+    }
+  };
+
+  const getAIResponseForCall = async (userInputText: string) => {
+    setCallStatus("connecting");
+    setLoadingCallResponse(true);
+
+    const sys = `You are a warm, direct, ultra-realistic, highly professional female startup co-founder and strategic advisor.
+The user is calling you on their mobile/desktop phone for a quick, dynamic voice session.
+Company Name/Concept: "${idea}"
+Founder Context: Location: ${profile?.city}, ${profile?.country} | Industry: ${profile?.industry} | Stage: ${profile?.stage}
+Past Memorized actions: [${memories.join("; ")}]
+
+CRITICAL PHONE CALL VOICE CONSTRAINTS:
+1. Speak in a highly natural, warm system voice. Avoid numbered lists, markdown bullets, tables or headers completely.
+2. Be extremely brief (max 35-40 words), as this is a fast back-and-forth oral conversation.
+3. Validate their action or query, provide exactly 1 smart strategic insight or critical suggestion, and ask an open conversational question to keep it flowing.`;
+
+    try {
+      const recentHistoryGroup = callHistory
+        .filter(h => h.text && !h.text.includes("Calling"))
+        .slice(-6)
+        .map(h => ({
+          role: h.sender === "user" ? "user" : "assistant",
+          content: h.text
+        }));
+
+      const res = await fetch("/api/ai-proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: sys,
+          messages: [...recentHistoryGroup, { role: "user", content: userInputText }],
+          max_tokens: 150
+        })
+      });
+
+      if (!res.ok) throw new Error();
+      const responseBody = await res.json();
+      let replySpeechText = responseBody?.delta?.text || "";
+      if (!replySpeechText) {
+        replySpeechText = `Excellent point. Let's make sure our unit economics support that strategy. What's our next critical hire?`;
+      }
+
+      setCallHistory(prev => [...prev, { sender: "ai", text: replySpeechText }]);
+      setCallStatus("speaking");
+      speakWithRealisticFemaleVoice(replySpeechText, undefined, () => {
+        if (isCallActive) {
+          setCallStatus("listening");
+          startListeningForUserSpeech();
+        }
+      });
+    } catch {
+      const fallback = "Got it. Let's execute that tactical move and check our runway parameters. How else can I assist on this call?";
+      setCallHistory(prev => [...prev, { sender: "ai", text: fallback }]);
+      setCallStatus("speaking");
+      speakWithRealisticFemaleVoice(fallback, undefined, () => {
+        if (isCallActive) {
+          setCallStatus("listening");
+          startListeningForUserSpeech();
+        }
+      });
+    } finally {
+      setLoadingCallResponse(false);
+    }
+  };
+
+  const triggerManualCallInput = async () => {
+    if (!manualCallInput.trim() || loadingCallResponse) return;
+    const textMsg = manualCallInput.trim();
+    setManualCallInput("");
+    
+    // Stop speaking if speaking
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    
+    setCallHistory(prev => [...prev, { sender: "user", text: textMsg }]);
+    await getAIResponseForCall(textMsg);
+  };
+
+  const stopLiveCall = () => {
+    setIsCallActive(false);
+    setCallStatus("disconnected");
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+    }
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+    }
+  };
+
+  const toggleMuteCall = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    if (nextMuted) {
+      setCallStatus("muted");
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+    } else {
+      setCallStatus("listening");
+      startListeningForUserSpeech();
+    }
   };
 
   // C. Customer Interview Script Generator
@@ -784,6 +1086,7 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
       <div style={{ display: "flex", borderBottom: "1px solid #1c1c1c", gap: "0.38rem", overflowX: "auto", paddingBottom: "2px" }}>
         {[
           { key: "co-pilot", label: t("brainTab"), icon: <Brain size={14} /> },
+          { key: "live-call", label: t("liveCallTab"), icon: <Phone size={14} /> },
           { key: "data-room", label: t("dataRoomTab"), icon: <ShieldCheck size={14} /> },
           { key: "outreach", label: t("outreachTab"), icon: <Mail size={14} /> },
           { key: "discovery", label: t("discoveryTab"), icon: <Users size={14} /> },
@@ -947,6 +1250,263 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
                   START CHALLENGE
                 </button>
               </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 1.5: LIVE VOICE CALL ROOM */}
+        {activeTab === "live-call" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-6">
+              
+              {/* Voice Engine Dashboard */}
+              <div style={{ background: "#0a0a0a", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.2rem" }}>
+                
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1c1c1c", paddingBottom: "0.85rem" }}>
+                  <div>
+                    <h3 style={{ color: LIME, fontSize: "13px", fontWeight: "bold", margin: 0 }}>📞 FORGE HANDS-FREE VOICE CALL</h3>
+                    <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "9px" }}>TWO-WAY REAL-TIME CALL SYSTEM</span>
+                  </div>
+                  <span style={{ color: CYAN, background: "rgba(0,255,255,0.1)", border: "1px solid rgba(0,255,255,0.25)", fontSize: "8px", fontWeight: "bold", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace" }}>
+                    {isCallActive ? "SESSION ACTIVE" : "OFFLINE"}
+                  </span>
+                </div>
+
+                {/* Voice Selection Controls for Female Realism */}
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid #1c1c1c", borderRadius: "6px", padding: '1rem' }}>
+                  <label style={{ display: "block", color: LIME, fontSize: "10px", fontWeight: "bold", marginBottom: "6px" }}>
+                    👩‍💼 AI CO-FOUNDER FEMALE VOICE TUNER
+                  </label>
+                  <p style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.74rem", margin: "0 0 10px" }}>
+                    Choose your companion's system voice. We auto-calibrate her pitch to 1.05 and speed to 0.94 for an elite, realistic, soft-spoken human-like tone.
+                  </p>
+                  
+                  {voices.length === 0 ? (
+                    <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>
+                      Detecting available browser speech engines... Run your call to play.
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedVoiceName}
+                      onChange={(e) => setSelectedVoiceName(e.target.value)}
+                      style={{ width: "100%", padding: "0.45rem", background: "#050505", border: "1px solid #222", color: "#fff", borderRadius: "4px", fontSize: "11px", fontFamily: "monospace" }}
+                    >
+                      {voices.map((v, idx) => (
+                        <option key={idx} value={v.name}>
+                          {v.name} ({v.lang}) {v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("zira") || v.name.toLowerCase().includes("samantha") || v.name.toLowerCase().includes("siri") ? "• Recommended Female 👩" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {/* Main Call State Interactive Display */}
+                <div style={{ background: "#050505", border: "1px solid #161616", borderRadius: "6px", padding: "2rem", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                  
+                  {isCallActive ? (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem" }}>
+                      
+                      {/* Animated Core Vocal Orb */}
+                      <div style={{ position: "relative", width: "100px", height: "100px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {/* Pulse Ring 1 */}
+                        <div 
+                          className="animate-ping"
+                          style={{ 
+                            position: "absolute", 
+                            width: "100px", 
+                            height: "100px", 
+                            borderRadius: "50%", 
+                            background: callStatus === "speaking" ? "rgba(200, 255, 0, 0.15)" : callStatus === "listening" ? "rgba(0, 255, 255, 0.15)" : "rgba(255, 60, 120, 0.15)",
+                            animationDuration: "2s"
+                          }} 
+                        />
+                        {/* Main Center Ball */}
+                        <div 
+                          style={{ 
+                            width: "70px", 
+                            height: "70px", 
+                            borderRadius: "50%", 
+                            background: callStatus === "speaking" ? LIME : callStatus === "listening" ? CYAN : PINK, 
+                            display: "flex", 
+                            alignItems: "center", 
+                            justifyContent: "center", 
+                            boxShadow: `0 0 25px ${callStatus === "speaking" ? LIME : callStatus === "listening" ? CYAN : PINK}`,
+                            transition: "all 0.3s ease"
+                          }}
+                        >
+                          <Phone size={24} color="#000" />
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: "center" }}>
+                        <span style={{ 
+                          color: callStatus === "speaking" ? LIME : callStatus === "listening" ? CYAN : "#888", 
+                          fontSize: "14px", 
+                          fontWeight: "900", 
+                          letterSpacing: "1px",
+                          display: "block",
+                          textTransform: "uppercase"
+                        }}>
+                          {callStatus === "speaking" ? "🗣️ SPEAKING..." : callStatus === "listening" ? "🎤 LISTENING..." : callStatus === "connecting" ? "⚡ SECURING LINK..." : "● MUTED"}
+                        </span>
+                        
+                        <span style={{ color: "rgba(255,255,255,0.45)", fontSize: "10px", marginTop: "4px", display: "block" }}>
+                          Call Duration: {Math.floor(callDuration / 60).toString().padStart(2, "0")}:{Math.floor(callDuration % 60).toString().padStart(2, "0")}
+                        </span>
+                      </div>
+
+                      {/* Control buttons */}
+                      <div style={{ display: "flex", gap: "0.85rem", marginTop: "0.5rem" }}>
+                        <button 
+                          onClick={toggleMuteCall}
+                          style={{ 
+                            background: isMuted ? PINK : "rgba(255,255,255,0.06)", 
+                            color: isMuted ? "#000" : "#fff", 
+                            border: `1px solid ${isMuted ? PINK : "#222"}`, 
+                            borderRadius: "50%", 
+                            width: "44px", 
+                            height: "44px", 
+                            display: "flex", 
+                            alignItems: "center", 
+                            justifyContent: "center", 
+                            cursor: "pointer", 
+                            transition: "all 0.15s" 
+                          }}
+                          title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
+                        >
+                          {isMuted ? <MicOff size={18} /> : <Mic size={18} />}
+                        </button>
+
+                        <button 
+                          onClick={stopLiveCall}
+                          className="glow-pink"
+                          style={{ 
+                            background: "rgba(255, 60, 120, 0.2)", 
+                            color: PINK, 
+                            border: `1px solid ${PINK}`, 
+                            borderRadius: "22px", 
+                            padding: "0 1.5rem", 
+                            height: "44px", 
+                            display: "flex", 
+                            alignItems: "center", 
+                            gap: "8px", 
+                            cursor: "pointer", 
+                            fontWeight: "bold",
+                            fontSize: "11px",
+                            transition: "all 0.15s" 
+                          }}
+                        >
+                          <PhoneOff size={15} />
+                          END ADVISORY CALL
+                        </button>
+                      </div>
+
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: "center", padding: "1rem 0" }}>
+                      <p style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.85rem", maxWidth: "320px", margin: "0 auto 1.5rem", lineHeight: "1.5" }}>
+                        Establish a high-fidelity vocal call to review strategic changes, pivot options, or business acceleration hands-free.
+                      </p>
+                      <button
+                        onClick={startLiveCall}
+                        style={{
+                          background: `linear-gradient(270deg, ${LIME} 0%, #aacc00 100%)`,
+                          color: "#111111",
+                          border: "none",
+                          padding: "0.85rem 2rem",
+                          borderRadius: "30px",
+                          fontSize: "12px",
+                          fontWeight: "900",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          boxShadow: `0 0 15px rgba(200, 255, 0, 0.3)`
+                        }}
+                      >
+                        <Phone size={15} />
+                        DIAL CO-FOUNDER AI CALL
+                      </button>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Pro Tip Card */}
+                <div style={{ background: "rgba(0, 255, 255, 0.02)", border: "1px solid rgba(0, 255, 255, 0.15)", borderRadius: "6px", padding: '1rem', fontSize: "0.80rem", color: "rgba(255,255,255,0.8)", lineHeight: "1.4" }}>
+                  💡 <span style={{ color: CYAN, fontWeight: "bold" }}>PRO INTERACTIVE TIP:</span> Hands-free call mode automatically listens when you stop talking and replies to you. (If mic permissions are restricted or Chrome speech recognition times out, you can also use the live text box on the right).
+                </div>
+
+              </div>
+
+              {/* Call History & Text Sync Channel */}
+              <div style={{ background: "#0a0a0a", border: "1px solid #1c1c1c", borderRadius: "8px", padding: '1.4rem', display: "flex", flexDirection: "column", height: "450px" }}>
+                <span style={{ color: LIME, fontSize: "10px", fontWeight: "bold", letterSpacing: "1px", display: "block" }}>📝 AUDIO SESSION TRANSCRIPTION</span>
+                <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "8.5px", display: "block", marginBottom: "0.75rem" }}>SECURE REAL-TIME TRANSCRIPTION OVERLAY</span>
+
+                {/* Log Messages */}
+                <div style={{ flex: 1, background: "#050505", border: "1px solid #161616", borderRadius: "6px", padding: "1rem", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                  {callHistory.length === 0 ? (
+                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: "11px", fontStyle: "italic" }}>
+                      No active call audio history. Initiate dial to link.
+                    </div>
+                  ) : (
+                    callHistory.map((h, i) => {
+                      const isAI = h.sender === "ai";
+                      return (
+                        <div 
+                          key={i} 
+                          style={{
+                            alignSelf: isAI ? "flex-start" : "flex-end",
+                            maxWidth: "85%",
+                            background: isAI ? "rgba(255,255,255,0.04)" : "rgba(200, 255, 0, 0.08)",
+                            border: `1px solid ${isAI ? "#1c1c1c" : "rgba(200, 255, 0, 0.25)"}`,
+                            borderRadius: "6px",
+                            padding: "0.6rem 0.85rem",
+                          }}
+                        >
+                          <span style={{ fontSize: "8px", fontWeight: "bold", display: "block", color: isAI ? PURPLE : LIME, marginBottom: "3px" }}>
+                            {isAI ? "👩‍💼 CO-FOUNDER (SPEECH OUTPUT)" : "👤 YOU (MICROPHONE)"}
+                          </span>
+                          <p style={{ color: "#fff", fontSize: "0.78rem", margin: 0, lineHeight: "1.4" }}>
+                            {h.text}
+                          </p>
+                        </div>
+                      )
+                    })
+                  )}
+                  {loadingCallResponse && (
+                    <div style={{ alignSelf: "flex-start", background: "rgba(255,255,255,0.02)", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
+                      <span className="animate-pulse" style={{ color: PURPLE, fontSize: "10px", fontWeight: "bold" }}>Generating tactical speech reply...</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* manual Text fallback */}
+                {isCallActive && (
+                  <div style={{ display: "flex", gap: "0.45rem", marginTop: "0.85rem" }}>
+                    <input 
+                      type="text"
+                      value={manualCallInput}
+                      onChange={e => setManualCallInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") triggerManualCallInput(); }}
+                      placeholder="Type query to get high-quality spoken output..."
+                      style={{ flex: 1, padding: "0.55rem", background: "#050505", border: "1px solid #222", borderRadius: "4px", color: "#fff", fontSize: "11px", fontFamily: "monospace" }}
+                    />
+                    <button
+                      onClick={triggerManualCallInput}
+                      disabled={loadingCallResponse || !manualCallInput.trim()}
+                      style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", width: "36px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                    >
+                      <Send size={12} color="#000" />
+                    </button>
+                  </div>
+                )}
+
+              </div>
+
             </div>
 
           </div>
