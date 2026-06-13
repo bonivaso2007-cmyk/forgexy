@@ -1,0 +1,6 @@
+{
+  "name": "Forge Idea Engine",
+  "description": "AI-powered idea validation tool for founders. Get reality checks, market analysis, and actionable outputs tailored to constraints and location.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
