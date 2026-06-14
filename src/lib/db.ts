@@ -356,3 +356,136 @@ export const store = {
     }
   },
 };
+
+// ── COMPOUNDING MEMORY SYSTEM ─────────────────────────────────
+// The key unlock: AI remembers patterns across sessions
+
+export type FounderMemory = {
+  id: string;
+  uid: string;
+  category: 'strength' | 'weakness' | 'pattern' | 'lesson' | 'preference';
+  content: string;
+  source: string;
+  confidence: number;
+  created_at: string;
+  last_referenced: string;
+  reference_count: number;
+};
+
+export async function getMemories(uid: string, category?: string): Promise<FounderMemory[]> {
+  let query = supabase
+    .from('founder_memories')
+    .select('*')
+    .eq('uid', uid)
+    .order('reference_count', { ascending: false })
+    .limit(50);
+
+  if (category) {
+    query = query.eq('category', category);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    // Fallback to localStorage for guests
+    const local = localStorage.getItem(`forge_memories_${uid}`);
+    return local ? JSON.parse(local) : [];
+  }
+  return data || [];
+}
+
+export async function saveMemory(memory: {
+  uid: string;
+  category: 'strength' | 'weakness' | 'pattern' | 'lesson' | 'preference';
+  content: string;
+  source: string;
+  confidence?: number;
+}): Promise<void> {
+  const { error } = await supabase
+    .from('founder_memories')
+    .insert({
+      uid: memory.uid,
+      category: memory.category,
+      content: memory.content,
+      source: memory.source,
+      confidence: memory.confidence || 70,
+    });
+
+  if (error) {
+    // Fallback to localStorage
+    const key = `forge_memories_${memory.uid}`;
+    const existing = localStorage.getItem(key);
+    const memories = existing ? JSON.parse(existing) : [];
+    memories.push({ ...memory, id: Date.now().toString(), created_at: new Date().toISOString() });
+    localStorage.setItem(key, JSON.stringify(memories));
+  }
+}
+
+export async function buildMemoryContext(uid: string): Promise<string> {
+  const memories = await getMemories(uid);
+  if (memories.length === 0) return '';
+
+  const grouped: Record<string, string[]> = {};
+  memories.forEach(m => {
+    if (!grouped[m.category]) grouped[m.category] = [];
+    grouped[m.category].push(m.content);
+  });
+
+  let context = 'FOUNDER PATTERNS (learned across sessions):\n';
+  Object.entries(grouped).forEach(([cat, items]) => {
+    if (items.length > 0) {
+      context += `${cat.toUpperCase()}: ${items.slice(0, 3).join('; ')}\n`;
+    }
+  });
+
+  return context;
+}
+
+// ── INVESTOR SIMULATION ──────────────────────────────────────
+
+export type InvestorSim = {
+  id: string;
+  uid: string;
+  persona: 'yc_partner' | 'angel' | 'vc_analyst' | 'corporate_dev';
+  transcript: any[];
+  score: number | null;
+  feedback: string | null;
+  created_at: string;
+};
+
+export async function saveInvestorSim(sim: {
+  uid: string;
+  persona: string;
+  transcript: any[];
+  score?: number;
+  feedback?: string;
+}): Promise<void> {
+  const { error } = await supabase
+    .from('investor_simulations')
+    .insert({
+      uid: sim.uid,
+      persona: sim.persona,
+      transcript: sim.transcript,
+      score: sim.score || null,
+      feedback: sim.feedback || null,
+    });
+
+  if (error) {
+    console.error('Error saving investor sim:', error);
+  }
+}
+
+export async function getInvestorSims(uid: string): Promise<InvestorSim[]> {
+  const { data, error } = await supabase
+    .from('investor_simulations')
+    .select('*')
+    .eq('uid', uid)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.error('Error fetching investor sims:', error);
+    return [];
+  }
+  return data || [];
+}

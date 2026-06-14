@@ -5,7 +5,9 @@ import PitchDeck from "./components/PitchDeck";
 import MarketLandscape from "./components/MarketLandscape";
 import RunwaySandbox from "./components/RunwaySandbox";
 import VentureSentinel from "./components/VentureSentinel";
+import InvestorSimulation from "./components/InvestorSimulation";
 import CoFounderHub from "./components/CoFounderHub";
+import { saveMemory, buildMemoryContext } from "./lib/db";
 
 const API = "/api/ai-proxy";
 const MODEL = "gemini-2.0-flash";
@@ -726,12 +728,33 @@ function RealityCheck({ idea, qa, profile, onProceed, onBack }) {
 
   useEffect(() => {
     (async () => {
+      // Load memories to make this check compound with past sessions
+      const uid = profile?.uid || "guest_user";
+      const memoryContext = await buildMemoryContext(uid);
+
       const sys = `You are FORGE REALITY CHECK — a brutal, honest advisor for early-stage founders.
 Analyse this idea against the founder's specific constraints. Be direct. No sugarcoating.
 Structure: ## Feasibility Score (X/10)\n## Can You Actually Build This?\n## Market Reality Check\n## Your Unfair Advantage\n## The Single Biggest Risk\n## Verdict`;
-      const prompt = `${profileContext(profile)}\n${marketContext(profile)}\n\nIdea: "${idea}"\n\nFounder's thinking:\n${qa.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n")}\n\nGive a reality check tailored to THIS specific founder's constraints and location.`;
+      const prompt = `${profileContext(profile)}\n${marketContext(profile)}\n${memoryContext}\n\nIdea: "${idea}"\n\nFounder's thinking:\n${qa.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n")}\n\nGive a reality check tailored to THIS specific founder's constraints and location.`;
       await aiStream(sys, prompt, chunk => setResult(chunk), 1000, true);
       setLoading(false);
+
+      // Extract learnings for compounding memory
+      if (qa && qa.length > 0) {
+        // Save patterns from Q&A
+        qa.forEach(item => {
+          if (item.answer && item.answer.length > 20) {
+            // Save significant answers as potential patterns
+            saveMemory({
+              uid,
+              category: "pattern",
+              content: item.answer.slice(0, 200),
+              source: "qa",
+              confidence: 60
+            });
+          }
+        });
+      }
     })();
   }, []);
 
@@ -1314,6 +1337,7 @@ export default function App() {
   const [showLandscape, setShowLandscape] = useState(false);
   const [showRunway, setShowRunway] = useState(false);
   const [showSentinel, setShowSentinel] = useState(false);
+  const [showInvestorSim, setShowInvestorSim] = useState(false);
   const [showCoFounderHub, setShowCoFounderHub] = useState(false);
   const [showAuthGateway, setShowAuthGateway] = useState(false);
   const [guestAuthOpen, setGuestAuthOpen] = useState(false);
@@ -1666,6 +1690,14 @@ export default function App() {
         <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
           <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <VentureSentinel idea={idea} profile={profile} onClose={() => setShowSentinel(false)} />
+          </div>
+        </div>
+      )}
+
+      {showInvestorSim && (
+        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[700px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
+            <InvestorSimulation idea={idea} profile={profile} onClose={() => setShowInvestorSim(false)} />
           </div>
         </div>
       )}
@@ -2043,14 +2075,26 @@ export default function App() {
               </div>
 
               {/* Runway Sandbox */}
-              <div 
-                className="outcard" 
+              <div
+                className="outcard"
                 style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
                 onClick={() => setShowRunway(true)}
               >
                 <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>📊</div>
                 <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Runway COGS Sandbox</div>
                 <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Model burns, margins, headcounts & 12M cash graphs</div>
+              </div>
+
+              {/* Investor Simulation */}
+              <div
+                className="outcard"
+                style={{ background: "rgba(184, 127, 255, 0.08)", border: "1px solid rgba(184, 127, 255, 0.3)", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
+                onClick={() => setShowInvestorSim(true)}
+              >
+                <span style={{ position: "absolute", top: "0.5rem", right: "0.6rem", color: PURPLE, fontSize: "0.55rem", letterSpacing: "1.5px", fontWeight: "bold" }}>NEW</span>
+                <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>🎤</div>
+                <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Investor Pitch Practice</div>
+                <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Practice with AI YC partners & angels before your real meeting</div>
               </div>
 
               {/* CO-FOUNDER CO-PILOT DECK — Living Memory companion */}
