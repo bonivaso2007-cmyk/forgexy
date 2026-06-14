@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import DOMPurify from "dompurify";
 
 // Accent Colors congruent with App style rules
 const LIME = "#c8ff00";
@@ -207,24 +208,26 @@ FOUNDER DEFENSE SUBMISSION:
     setResponse("");
   };
 
+  // SECURITY: Sanitize AI-generated content to prevent XSS
   const formatText = (txt: string) => {
     return txt.split("\n").map((line, idx) => {
       if (!line.trim()) return <div key={idx} style={{ height: "0.55rem" }} />;
       const isBullet = line.trim().startsWith("→") || line.trim().startsWith("-");
       const cleanLine = line.replace(/^[→\-]\s*/, "");
       const html = cleanLine.replace(/\*\*(.*?)\*\*/g, `<strong style="color:${LIME}; font-weight:bold;">$1</strong>`);
+      const safeHtml = DOMPurify.sanitize(html, { ALLOWED_TAGS: ['strong'], ALLOWED_ATTR: ['style'] });
       return (
-        <div key={idx} style={{ 
-          fontSize: "0.80rem", 
-          lineHeight: "1.65", 
-          color: "rgba(255,255,255,0.85)", 
+        <div key={idx} style={{
+          fontSize: "0.80rem",
+          lineHeight: "1.65",
+          color: "rgba(255,255,255,0.85)",
           fontFamily: "monospace",
           marginBottom: "0.35rem",
           paddingLeft: isBullet ? "1.2rem" : 0,
           position: "relative"
         }}>
           {isBullet && <span style={{ position: "absolute", left: 0, color: LIME }}>→</span>}
-          <span dangerouslySetInnerHTML={{ __html: html }} />
+          <span dangerouslySetInnerHTML={{ __html: safeHtml }} />
         </div>
       );
     });

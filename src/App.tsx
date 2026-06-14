@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Component, ErrorInfo, ReactNode } from "react";
+import DOMPurify from "dompurify";
 import WarRoom from "./components/WarRoom";
 import PitchDeck from "./components/PitchDeck";
 import MarketLandscape from "./components/MarketLandscape";
@@ -7,7 +8,7 @@ import VentureSentinel from "./components/VentureSentinel";
 import CoFounderHub from "./components/CoFounderHub";
 
 const API = "/api/ai-proxy";
-const MODEL = "gemini-3.5-flash";
+const MODEL = "gemini-2.0-flash";
 const Q_TARGET = 6;
 const LIME = "#C8FF00";
 const PURPLE = "#B87FFF";
@@ -18,13 +19,36 @@ const BRANCH_COLORS = [LIME, PURPLE, CYAN, PINK, ORANGE, "#50E3C2"];
 
 // ── SECURE CRYPTO VAULT ENGINE ────────────────────────────
 // Uses PBKDF2 + AES-GCM (all native Web Crypto) for zero-trust client-side vault encryption.
-// Plaintext data is never written to disk. The session key lives ONLY in-memory or transiently in sessionStorage (tab scope).
+// IMPORTANT: Password is NEVER stored. Key exists only in memory during session.
+// On tab refresh, user must re-unlock vault (or data remains encrypted but unreadable).
 
-async function hashPasswordSHA256(password: string): Promise<string> {
+const PBKDF2_ITERATIONS = 310000; // OWASP 2024 recommendation for SHA-256
+
+// Secure password hashing using PBKDF2 (NOT just SHA-256)
+async function hashPasswordPBKDF2(password: string, saltHex: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer))
+  const salt = new Uint8Array(saltHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+
+  const passwordKey = await window.crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+
+  const derivedBits = await window.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    passwordKey,
+    256
+  );
+
+  return Array.from(new Uint8Array(derivedBits))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -42,7 +66,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
     {
       name: "PBKDF2",
       salt: salt,
-      iterations: 100000,
+      iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
     passwordKey,
@@ -57,13 +81,14 @@ let activeSaltHex = "";
 
 async function initializeEncryption(password: string, saltHex: string) {
   try {
-    const salt = saltHex 
+    const salt = saltHex
       ? new Uint8Array(saltHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)))
       : window.crypto.getRandomValues(new Uint8Array(16));
-    
+
     activeSaltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
     activeEncryptionKey = await deriveKey(password, salt);
-    sessionStorage.setItem("forge_vault_session", JSON.stringify({ salt: activeSaltHex, password }));
+    // SECURITY FIX: Store only salt, NOT password. Key exists only in memory.
+    sessionStorage.setItem("forge_vault_session", JSON.stringify({ salt: activeSaltHex }));
   } catch (error) {
     console.error("AES-GCM Cryptographic init failed:", error);
   }
@@ -291,6 +316,7 @@ async function ai(sys, usr, asJSON = false, maxTok = 1400, retries = 2, useSearc
 }
 
 // ── MARKDOWN ──────────────────────────────────────────────
+// SECURITY: All AI-generated text is sanitized through DOMPurify before rendering
 function Md({ text }) {
   return (
     <div style={{ fontFamily: "monospace" }}>
@@ -301,20 +327,22 @@ function Md({ text }) {
         const isBullet = /^[-→•]\s/.test(line.trim());
         const content = line.replace(/^#+\s/, "").replace(/^[-→•]\s/, "");
         const html = content.replace(/\*\*(.+?)\*\*/g, `<strong style='color:${LIME}; font-weight: bold;'>$1</strong>`);
+        // SECURITY FIX: Sanitize AI-generated content to prevent XSS
+        const safeHtml = DOMPurify.sanitize(html, { ALLOWED_TAGS: ['strong'], ALLOWED_ATTR: ['style'] });
         return (
-          <div key={i} style={{ 
-            marginBottom: isH1 ? "1.2rem" : isH2 ? "0.9rem" : "0.22rem", 
-            marginTop: isH1 ? "1.6rem" : isH2 ? "1.4rem" : isH3 ? "0.8rem" : 0, 
-            fontSize: isH1 ? "1.2rem" : isH2 ? "1.02rem" : isH3 ? "0.92rem" : "0.83rem", 
-            fontWeight: "bold", 
+          <div key={i} style={{
+            marginBottom: isH1 ? "1.2rem" : isH2 ? "0.9rem" : "0.22rem",
+            marginTop: isH1 ? "1.6rem" : isH2 ? "1.4rem" : isH3 ? "0.8rem" : 0,
+            fontSize: isH1 ? "1.2rem" : isH2 ? "1.02rem" : isH3 ? "0.92rem" : "0.83rem",
+            fontWeight: "bold",
             fontFamily: "monospace",
-            color: isH1 ? LIME : isH2 ? PURPLE : isH3 ? CYAN : isBullet ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.85)", 
-            lineHeight: "1.75", 
-            paddingLeft: isBullet ? "1.2rem" : 0, 
-            position: "relative" 
+            color: isH1 ? LIME : isH2 ? PURPLE : isH3 ? CYAN : isBullet ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.85)",
+            lineHeight: "1.75",
+            paddingLeft: isBullet ? "1.2rem" : 0,
+            position: "relative"
           }}>
             {isBullet && <span style={{ position: "absolute", left: 0, color: LIME }}>→</span>}
-            <span dangerouslySetInnerHTML={{ __html: html }} />
+            <span dangerouslySetInnerHTML={{ __html: safeHtml }} />
           </div>
         );
       })}
@@ -350,34 +378,40 @@ function AuthScreen({ onAuth }) {
   const [form, setForm] = useState({ email: "", password: "", name: "" });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
- 
+
   const submit = async () => {
     setErr(""); setLoading(true);
     const { email, password, name } = form;
     if (!email.trim() || !password.trim()) { setErr("Fill in all fields."); setLoading(false); return; }
     if (password.length < 6) { setErr("Password must be at least 6 characters."); setLoading(false); return; }
+
+    // Input validation: prevent excessively long inputs
+    if (email.length > 254) { setErr("Email too long."); setLoading(false); return; }
+    if (password.length > 128) { setErr("Password too long."); setLoading(false); return; }
+
     const uid = btoa(email.toLowerCase()).replace(/=/g, "");
-    
+
     try {
       if (mode === "signup") {
         const exists = await store.get(`user:${uid}`);
         if (exists) { setErr("Account already exists. Log in instead."); setLoading(false); return; }
         if (!name.trim()) { setErr("Enter your name."); setLoading(false); return; }
-        
-        // Generate cryptographic salt for SHA-256 hash and PBKDF2 GCM encryption key
+        if (name.length > 100) { setErr("Name too long."); setLoading(false); return; }
+
+        // Generate cryptographic salt for PBKDF2 hash and AES-GCM encryption
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
         const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-        const passwordHash = await hashPasswordSHA256(password);
-        
-        const user = { 
-          uid, 
-          email: email.toLowerCase(), 
-          name: name.trim(), 
-          passwordHash, 
-          saltHex, 
-          createdAt: Date.now() 
+        const passwordHash = await hashPasswordPBKDF2(password, saltHex);
+
+        const user = {
+          uid,
+          email: email.toLowerCase(),
+          name: name.trim().slice(0, 100),
+          passwordHash,
+          saltHex,
+          createdAt: Date.now()
         };
-        
+
         await initializeEncryption(password, saltHex);
         await store.set(`user:${uid}`, user);
         await store.set(`session`, { uid, email: user.email, name: user.name });
@@ -385,23 +419,21 @@ function AuthScreen({ onAuth }) {
       } else {
         const user = await store.get(`user:${uid}`);
         if (!user) { setErr("Invalid email or password."); setLoading(false); return; }
-        
-        const shaHash = await hashPasswordSHA256(password);
-        const legacyHash = btoa(password);
-        
-        const isValid = user.passwordHash === shaHash || user.passwordHash === legacyHash;
-        if (!isValid) { setErr("Invalid email or password."); setLoading(false); return; }
-        
-        // Dynamic upgrade for any legacy btoa password users to salted SHA-256 & GCM vaulting
-        let sHex = user.saltHex || "";
+
+        // SECURITY FIX: Use PBKDF2, remove btoa fallback entirely
+        const sHex = user.saltHex;
         if (!sHex) {
-          const salt = window.crypto.getRandomValues(new Uint8Array(16));
-          sHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-          user.saltHex = sHex;
-          user.passwordHash = shaHash;
-          await store.set(`user:${uid}`, user);
+          // Legacy account without salt - cannot verify securely
+          setErr("Account needs password reset. Contact support.");
+          setLoading(false);
+          return;
         }
-        
+
+        const passwordHash = await hashPasswordPBKDF2(password, sHex);
+        const isValid = user.passwordHash === passwordHash;
+
+        if (!isValid) { setErr("Invalid email or password."); setLoading(false); return; }
+
         await initializeEncryption(password, sHex);
         await store.set(`session`, { uid, email: user.email, name: user.name });
         onAuth(user, false);
@@ -427,9 +459,9 @@ function AuthScreen({ onAuth }) {
           ))}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {mode === "signup" && <input style={inp} placeholder="Full name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
-          <input style={inp} placeholder="Email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
-          <input style={inp} placeholder="Password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
+          {mode === "signup" && <input style={inp} placeholder="Full name" maxLength={100} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
+          <input style={inp} placeholder="Email" type="email" maxLength={254} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
+          <input style={inp} placeholder="Password" type="password" maxLength={128} value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
         </div>
         {err && <div style={{ color: PINK, fontSize: "0.74rem", marginTop: "0.75rem", background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.15)", borderRadius: "6px", padding: "0.55rem 0.85rem" }}>{err}</div>}
         <button onClick={submit} disabled={loading} style={{ width: "100%", background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: loading ? "not-allowed" : "pointer", fontFamily: "monospace", marginTop: "1.2rem", opacity: loading ? 0.5 : 1 }}>
@@ -1334,16 +1366,9 @@ export default function App() {
   // load session on mount
   useEffect(() => {
     (async () => {
-      // 1. Attempt dynamic restoration of physical-isolation key material
-      const vaultSession = sessionStorage.getItem("forge_vault_session");
-      if (vaultSession) {
-        try {
-          const { salt, password } = JSON.parse(vaultSession);
-          await initializeEncryption(password, salt);
-        } catch (e) {
-          console.error("Cryptographic restoring procedure interrupted:", e);
-        }
-      }
+      // SECURITY: On page refresh, encryption key is lost (password not stored).
+      // User must re-authenticate to decrypt vault data. This is secure-by-design.
+      // The salt is stored but the key can only be derived from password.
 
       // 2. Load and increment local safe analytics index
       const currentAnalytics = await store.get("forge_analytics") || { sessionCount: 0, realityCheckCount: 0 };
@@ -1372,10 +1397,12 @@ export default function App() {
         setAppState("app");
         return;
       }
-      
-      // 3. Absolute protection: If local session exists but key has been purged from memory, force login
+
+      // 3. If session exists but encryption key is not available (page refresh), require re-auth
+      // This is intended secure behavior - data remains encrypted until user logs in again
       if (!activeEncryptionKey) {
-        await store.del("session");
+        // Session exists but key is not in memory - prompt for login
+        // Note: User's encrypted data is safe, just inaccessible until re-auth
         setAppState("auth");
         return;
       }
@@ -1445,13 +1472,24 @@ export default function App() {
     }
   }, [idea, profile, user, currentIdeaId]);
 
+  // Debounced prefetch to avoid rapid API calls
+  const prefetchDebounceRef = useRef<number | null>(null);
   const prefetchNext = useCallback((updated) => {
     if (updated.length >= Q_TARGET) return;
     const styles = ["Creative", "Critical", "Strategic", "Logical"];
     const key = `q${updated.length + 1}`;
     if (prefetchRef.current[key]) return;
-    const style = styles[updated.length % styles.length];
-    prefetchRef.current[key] = ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${style} style. Biggest unexplored gap. Push hard.`, false, 1000);
+
+    // Clear any pending debounce
+    if (prefetchDebounceRef.current) {
+      clearTimeout(prefetchDebounceRef.current);
+    }
+
+    // Debounce by 800ms before making API call
+    prefetchDebounceRef.current = window.setTimeout(() => {
+      const style = styles[updated.length % styles.length];
+      prefetchRef.current[key] = ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${style} style. Biggest unexplored gap. Push hard.`, false, 1000);
+    }, 800);
   }, [idea, profile]);
 
   const cleanQuestion = (qStr) => {
@@ -1871,7 +1909,7 @@ export default function App() {
               <span style={{ color: "rgba(255,255,255,0.75)", fontSize: "0.78rem", lineHeight: "1.5", fontFamily: "monospace" }}>{profile?.bio || `Welcome, ${profile?.name}`}</span>
             </div>
             <p style={G.label}>Drop your raw idea</p>
-            <textarea style={{ ...G.ta, height: "150px" }} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
+            <textarea style={{ ...G.ta, height: "150px" }} maxLength={2000} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
             <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "0.9rem" }}>
               <button style={{ ...G.btn, opacity: (!idea.trim() || loading) ? 0.25 : 1 }} onClick={ignite} disabled={!idea.trim() || loading}>{loading ? "LOADING…" : "IGNITE →"}</button>
               <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "10px" }}>⌘ + Enter</span>
@@ -1892,7 +1930,7 @@ export default function App() {
             ) : (<>
               <p style={{ color: "#ffffff", fontSize: "1.25rem", lineHeight: "1.75", margin: "0 0 1.9rem", fontFamily: "monospace", fontWeight: "bold" }}>{curQ}</p>
               <p style={G.label}>Your answer</p>
-              <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
+              <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} maxLength={2000} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
               <div style={{ display: "flex", gap: "0.7rem", marginTop: "0.85rem", alignItems: "center" }}>
                 {qa.length > 0 && <button className="gh" style={G.ghost} onClick={backQ}>← BACK</button>}
                 <button style={{ ...G.btn, opacity: !curA.trim() ? 0.2 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH →" : "NEXT →"}</button>

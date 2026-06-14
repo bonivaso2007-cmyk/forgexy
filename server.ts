@@ -67,7 +67,7 @@ async function startServer() {
         ]
       }`;
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: `Locate 4-6 competitors in or near ${city} offering "${niche}". Place their coordinates closely clustered around the center coordinates of ${city}. Return JSON only.`,
         config: { systemInstruction: sys, temperature: 0.2, responseMimeType: "application/json" }
       });
@@ -168,7 +168,7 @@ async function startServer() {
 
       // Call Gemini 3.5 Flash streaming API (or custom specified model)
       const streamResponse = await ai.models.generateContentStream({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: userPrompt,
         config: config,
       });
