@@ -9,7 +9,6 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
-        'dompurify': path.resolve(__dirname, 'node_modules/dompurify/dist/purify.es.mjs'),
       },
     },
     server: {
