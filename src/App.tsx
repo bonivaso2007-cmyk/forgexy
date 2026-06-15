@@ -6,6 +6,7 @@ import MarketLandscape from "./components/MarketLandscape";
 import RunwaySandbox from "./components/RunwaySandbox";
 import VentureSentinel from "./components/VentureSentinel";
 import InvestorSimulation from "./components/InvestorSimulation";
+import CommandPalette from "./components/CommandPalette";
 import CoFounderHub from "./components/CoFounderHub";
 import { saveMemory, buildMemoryContext } from "./lib/db";
 
@@ -691,27 +692,95 @@ function HistoryPanel({ uid, onLoad, onClose }) {
     setIdeas(p => p.filter(x => x.id !== id));
   };
 
+  // Group ideas by date for timeline view
+  const groupByDate = (ideasList) => {
+    const groups = {};
+    ideasList.forEach(idea => {
+      const date = new Date(idea.savedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(idea);
+    });
+    return Object.entries(groups);
+  };
+
+  const groupedIdeas = groupByDate(ideas);
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(4px)" }}>
-      <div style={{ width: "min(480px,100vw)", background: "#080808", borderLeft: "1px solid #1c1c1c", display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(8px)" }}>
+      <style>{`
+        @keyframes slideIn {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+      `}</style>
+      <div style={{ width: "min(520px,100vw)", background: "#080808", borderLeft: "1px solid #1c1c1c", display: "flex", flexDirection: "column", height: "100vh", animation: "slideIn 0.25s ease-out" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem", borderBottom: "1px solid #1c1c1c", flexShrink: 0 }}>
-          <div style={{ color: LIME, fontSize: "0.75rem", fontWeight: "900", letterSpacing: "3px", fontFamily: "monospace" }}>IDEA VAULT</div>
+          <div>
+            <div style={{ color: LIME, fontSize: "0.75rem", fontWeight: "900", letterSpacing: "3px", fontFamily: "monospace" }}>IDEA TIMELINE</div>
+            <div style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.62rem", fontFamily: "monospace", marginTop: "2px" }}>{ideas.length} concepts tracked</div>
+          </div>
           <button onClick={onClose} style={{ background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.3)", color: PINK, borderRadius: "6px", padding: "5px 11px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.78rem", fontWeight: "bold" }}>✕</button>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "1.2rem 1.5rem" }}>
-          {loading && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", fontFamily: "monospace" }}>Loading…</div>}
-          {!loading && ideas.length === 0 && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.82rem", fontFamily: "monospace" }}>No saved ideas yet. Start one and it'll appear here.</div>}
-          {ideas.map(idea => (
-            <div key={idea.id} style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1rem 1.1rem", marginBottom: "0.75rem" }}>
-              <div style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "0.82rem", marginBottom: "0.55rem", fontFamily: "monospace", lineHeight: "1.5" }}>{idea.text?.slice(0, 100)}{idea.text?.length > 100 ? "…" : ""}</div>
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
-                {idea.score && <span style={{ color: LIME, fontSize: "10px", border: "1px solid #1c1c1c", padding: "2px 7px", borderRadius: "6px", background: "rgba(255,255,255,0.02)", fontWeight: "bold", fontFamily: "monospace" }}>{idea.score} — {idea.label}</span>}
-                <span style={{ color: "rgba(255, 255, 255, 0.3)", fontSize: "0.62rem", fontFamily: "monospace" }}>{new Date(idea.savedAt).toLocaleDateString()}</span>
-                <div style={{ display: "flex", gap: "0.4rem" }}>
-                  <button onClick={() => { onLoad(idea); onClose(); }} style={{ background: "transparent", border: "1px solid #1c1c1c", color: "#ffffff", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>LOAD</button>
-                  <button onClick={() => del(idea.id)} style={{ background: "transparent", border: "1px solid rgba(255,60,120,0.25)", color: PINK, borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>✕</button>
-                </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
+          {loading && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "3rem" }}>
+              <div style={{ width: "24px", height: "24px", border: `2px solid #1c1c1c`, borderTop: `2px solid ${LIME}`, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+            </div>
+          )}
+          {!loading && ideas.length === 0 && (
+            <div style={{ textAlign: "center", padding: "3rem 2rem" }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>💡</div>
+              <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontFamily: "monospace" }}>No ideas saved yet.</div>
+              <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.72rem", fontFamily: "monospace", marginTop: "0.5rem" }}>Your validated concepts will appear here as a timeline.</div>
+            </div>
+          )}
+          {groupedIdeas.map(([date, dateIdeas], groupIdx) => (
+            <div key={date} style={{ marginBottom: "2rem" }}>
+              {/* Date header */}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+                <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: groupIdx === 0 ? LIME : "#1c1c1c", boxShadow: groupIdx === 0 ? `0 0 8px ${LIME}` : "none" }} />
+                <div style={{ color: groupIdx === 0 ? LIME : "rgba(255,255,255,0.5)", fontSize: "0.65rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>{date.toUpperCase()}</div>
+                {groupIdx === 0 && <span style={{ color: LIME, fontSize: "0.55rem", padding: "2px 6px", background: "rgba(200,255,0,0.1)", borderRadius: "3px", fontFamily: "monospace" }}>LATEST</span>}
               </div>
+
+              {/* Ideas for this date */}
+              {dateIdeas.map((idea, idx) => (
+                <div key={idea.id} style={{ marginLeft: "4px", paddingLeft: "22px", borderLeft: `2px solid ${idx === dateIdeas.length - 1 ? "transparent" : "#1c1c1c"}`, marginBottom: "0.85rem" }}>
+                  <div style={{ background: "rgba(9,9,9,0.8)", border: `1px solid ${idea.score >= 80 ? "rgba(200,255,0,0.2)" : "#1c1c1c"}`, borderRadius: "8px", padding: "1rem 1.15rem", transition: "all 0.2s", cursor: "pointer" }}
+                    onClick={() => { onLoad(idea); onClose(); }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = LIME; e.currentTarget.style.background = "rgba(12,12,12,0.9)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = idea.score >= 80 ? "rgba(200,255,0,0.2)" : "#1c1c1c"; e.currentTarget.style.background = "rgba(9,9,9,0.8)"; }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
+                      <div style={{ color: "rgba(255, 255, 255, 0.85)", fontSize: "0.8rem", fontFamily: "monospace", lineHeight: "1.55", flex: 1 }}>
+                        {idea.text?.slice(0, 80)}{idea.text?.length > 80 ? "…" : ""}
+                      </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); del(idea.id); }}
+                        style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.2)", cursor: "pointer", padding: "2px", fontSize: "12px", marginLeft: "0.5rem" }}
+                        onMouseEnter={e => e.currentTarget.style.color = PINK}
+                        onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.2)"}
+                      >✕</button>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                      {idea.score && (
+                        <span style={{
+                          color: idea.score >= 80 ? LIME : idea.score >= 60 ? CYAN : PINK,
+                          fontSize: "10px",
+                          fontWeight: "bold",
+                          fontFamily: "monospace",
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                          background: idea.score >= 80 ? "rgba(200,255,0,0.1)" : idea.score >= 60 ? "rgba(0,255,255,0.1)" : "rgba(255,60,120,0.1)"
+                        }}>{idea.score}% {idea.label}</span>
+                      )}
+                      <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "0.6rem", fontFamily: "monospace" }}>
+                        {new Date(idea.savedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -1338,6 +1407,8 @@ export default function App() {
   const [showRunway, setShowRunway] = useState(false);
   const [showSentinel, setShowSentinel] = useState(false);
   const [showInvestorSim, setShowInvestorSim] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
   const [showCoFounderHub, setShowCoFounderHub] = useState(false);
   const [showAuthGateway, setShowAuthGateway] = useState(false);
   const [guestAuthOpen, setGuestAuthOpen] = useState(false);
@@ -1516,6 +1587,33 @@ export default function App() {
     }, 800);
   }, [idea, profile]);
 
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleGlobalKeydown = (e: KeyboardEvent) => {
+      // ⌘K or Ctrl+K - Open command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+      // Escape - Close modals
+      if (e.key === "Escape") {
+        if (showCommandPalette) setShowCommandPalette(false);
+        else if (focusMode) setFocusMode(false);
+      }
+      // F or ⌘. - Toggle focus mode (only when not in input)
+      if ((e.key === "f" && !e.metaKey && !e.ctrlKey) || ((e.metaKey || e.ctrlKey) && e.key === ".")) {
+        const activeEl = document.activeElement;
+        const isInput = activeEl?.tagName === "INPUT" || activeEl?.tagName === "TEXTAREA";
+        if (!isInput && phase !== "ignition") {
+          e.preventDefault();
+          setFocusMode(prev => !prev);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeydown);
+    return () => window.removeEventListener("keydown", handleGlobalKeydown);
+  }, [showCommandPalette, focusMode, phase]);
+
   const cleanQuestion = (qStr) => {
     let cleanQ = qStr.trim();
     cleanQ = cleanQ.replace(/^(Q\d+:?\s*|\d+\.\s*)/i, "");
@@ -1686,6 +1784,29 @@ export default function App() {
       {showProfile && <ProfilePanel profile={profile} user={user} onUpdate={p => setProfile(p)} onLogout={logout} onClose={() => setShowProfile(false)} />}
       {showHistory && <HistoryPanel uid={user?.uid} onLoad={loadIdea} onClose={() => setShowHistory(false)} />}
 
+      {/* Command Palette - ⌘K */}
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        ideas={guestIgnitions.map((text, i) => ({ id: `g${i}`, text, score: null }))}
+        onLoadIdea={(saved) => { setIdea(saved.text); setPhase("ignition"); }}
+        onNavigate={(path) => {
+          if (path === "profile") setShowProfile(true);
+          if (path === "vault") setShowHistory(true);
+        }}
+        onOpenTool={(tool) => {
+          if (tool === "warroom") setShowWarRoom(true);
+          if (tool === "pitchdeck") setShowPitchDeck(true);
+          if (tool === "landscape") setShowLandscape(true);
+          if (tool === "runway") setShowRunway(true);
+          if (tool === "investor") setShowInvestorSim(true);
+          if (tool === "sentinel") setShowSentinel(true);
+          if (tool === "cofounder") setShowCoFounderHub(true);
+        }}
+        onIntelQuery={(q) => { setIntelQuery(q); setIntel(true); }}
+        onNewIdea={resetIdea}
+      />
+
       {showSentinel && (
         <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
           <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
@@ -1805,7 +1926,107 @@ export default function App() {
       )}
 
       <div style={{ ...G.wrap, paddingRight: intel ? "440px" : "0" }}>
-        
+
+        {/* FOCUS MODE OVERLAY - Monk Mode */}
+        {focusMode && (
+          <div style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(5, 5, 5, 0.97)",
+            zIndex: 9990,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "2rem"
+          }}>
+            <div style={{
+              width: "100%",
+              maxWidth: "700px",
+              background: "#080808",
+              border: "1px solid #1c1c1c",
+              borderRadius: "12px",
+              padding: "2.5rem",
+              position: "relative"
+            }}>
+              <button
+                onClick={() => setFocusMode(false)}
+                style={{
+                  position: "absolute",
+                  top: "1rem",
+                  right: "1rem",
+                  background: "transparent",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  color: "rgba(255,255,255,0.5)",
+                  borderRadius: "6px",
+                  padding: "0.4rem 0.8rem",
+                  fontSize: "0.7rem",
+                  cursor: "pointer",
+                  fontFamily: "monospace"
+                }}
+              >Exit Focus (F)</button>
+
+              <div style={{ color: LIME, fontSize: "0.65rem", letterSpacing: "3px", fontFamily: "monospace", fontWeight: "bold", marginBottom: "1.5rem" }}>MONK MODE</div>
+
+              {phase === "ignition" && (
+                <>
+                  <p style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.85rem", fontFamily: "monospace", marginBottom: "1rem" }}>What's on your mind?</p>
+                  <textarea
+                    style={{ ...G.ta, height: "120px" }}
+                    maxLength={2000}
+                    placeholder="Speak your idea here..."
+                    value={idea}
+                    onChange={e => setIdea(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }}
+                    autoFocus
+                  />
+                  <button style={{ ...G.btn, marginTop: "1rem", opacity: !idea.trim() ? 0.3 : 1 }} onClick={ignite} disabled={!idea.trim() || loading}>IGNITE</button>
+                </>
+              )}
+
+              {phase === "questioning" && (
+                <>
+                  <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "1px", marginBottom: "1.5rem", fontFamily: "monospace" }}>{qa.length}/{Q_TARGET} QUESTIONS</div>
+                  {loading ? (
+                    <div style={{ padding: "2rem", textAlign: "center" }}><span style={{ color: PURPLE, fontSize: "0.75rem", letterSpacing: "2px", fontFamily: "monospace" }}>THINKING...</span></div>
+                  ) : (
+                    <>
+                      <p style={{ color: "#fff", fontSize: "1.15rem", lineHeight: "1.75", margin: "0 0 1.5rem", fontFamily: "monospace", fontWeight: "bold" }}>{curQ}</p>
+                      <textarea
+                        ref={taRef}
+                        style={{ ...G.ta, height: "100px" }}
+                        maxLength={2000}
+                        placeholder="Your honest answer..."
+                        value={curA}
+                        onChange={e => setCurA(e.target.value)}
+                        autoFocus
+                      />
+                      <div style={{ display: "flex", gap: "0.7rem", marginTop: "1rem" }}>
+                        <button style={{ ...G.btn, opacity: !curA.trim() ? 0.3 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH" : "NEXT"}</button>
+                        {qa.length >= 3 && <button className="gh" style={G.ghost} onClick={() => { scoreIdea(qa); setPhase("reality-check"); setFocusMode(false); }}>skip →</button>}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {phase === "reality-check" && (
+                <div style={{ textAlign: "center", padding: "2rem 0" }}>
+                  <div style={{ fontSize: "2.5rem", fontWeight: "900", color: ideaScore ? scoreColor(ideaScore.score) : LIME, fontFamily: "monospace" }}>{ideaScore?.score || "..."}%</div>
+                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.75rem", fontFamily: "monospace", marginTop: "0.5rem" }}>{ideaScore?.label || "Scoring..."}</div>
+                  <button style={{ ...G.btn, marginTop: "1.5rem" }} onClick={() => { setPhase("output-select"); setFocusMode(false); }}>VIEW RESULTS</button>
+                </div>
+              )}
+
+              {(phase === "output-select" || phase === "output" || phase === "generating") && (
+                <div style={{ textAlign: "center", padding: "2rem 0" }}>
+                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontFamily: "monospace" }}>Focus mode is for ideation only.</div>
+                  <button style={{ ...G.btn, marginTop: "1rem" }} onClick={() => setFocusMode(false)}>EXIT TO RESULTS</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* GLOBAL SECURITY / OFFLINE ERROR BANNER */}
         {globalError && (
           <div style={{ width: "100%", background: "rgba(255, 60, 120, 0.12)", border: "1px solid rgba(255, 60, 120, 0.3)", borderRadius: "6px", padding: "0.85rem 1.2rem", marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", animation: "fadeIn 0.3s ease" }}>
@@ -1888,6 +2109,12 @@ export default function App() {
               <button className="gh" onClick={() => { setCompany(true); setIntel(false); }} style={{ ...G.ghost, color: company ? LIME : "#ffffff", borderColor: company ? LIME : "#1c1c1c" }}>🏗 Build</button>
             </>}
             <button className="gh" style={G.ghost} onClick={() => setShowHistory(true)}>📁 Vault</button>
+            <button
+              className="gh"
+              style={{ ...G.ghost, color: focusMode ? LIME : "rgba(255,255,255,0.5)", borderColor: focusMode ? LIME : "#1c1c1c" }}
+              onClick={() => setFocusMode(!focusMode)}
+              title="Focus Mode (F)"
+            >{focusMode ? "👁 FOCUS" : "👁‍🗨"}</button>
             <button className="gh" style={{ ...G.ghost, display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => setShowProfile(true)}>
               <div style={{ width: "18px", height: "18px", borderRadius: "50%", background: `${LIME}2a`, border: `1px solid ${LIME}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: LIME, fontWeight: "bold" }}>{profile?.name?.[0]?.toUpperCase()}</div>
               <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.68rem" }}>{profile?.name?.split(" ")[0]}</span>
@@ -1940,8 +2167,55 @@ export default function App() {
               <div style={{ width: "4px", height: "4px", borderRadius: "50%", background: LIME, flexShrink: 0 }} />
               <span style={{ color: "rgba(255,255,255,0.75)", fontSize: "0.78rem", lineHeight: "1.5", fontFamily: "monospace" }}>{profile?.bio || `Welcome, ${profile?.name}`}</span>
             </div>
-            <p style={G.label}>Drop your raw idea</p>
-            <textarea style={{ ...G.ta, height: "150px" }} maxLength={2000} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
+            <p style={G.label}>Drop your raw idea <span style={{ color: "rgba(255,255,255,0.3)", fontWeight: "normal" }}>(or use voice →)</span></p>
+            <div style={{ position: "relative" }}>
+              <textarea style={{ ...G.ta, height: "150px", paddingRight: "3rem" }} maxLength={2000} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
+              {/* Voice capture button */}
+              <button
+                onClick={async () => {
+                  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                    alert("Voice capture not supported in this browser. Try Chrome or Edge.");
+                    return;
+                  }
+                  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                  const recognition = new SpeechRecognition();
+                  recognition.lang = "en-US";
+                  recognition.continuous = true;
+                  recognition.interimResults = true;
+
+                  recognition.onresult = (event: any) => {
+                    let transcript = "";
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                      transcript += event.results[i][0].transcript;
+                    }
+                    setIdea(prev => prev + (prev ? " " : "") + transcript);
+                  };
+
+                  recognition.start();
+                  // Auto-stop after 30 seconds
+                  setTimeout(() => recognition.stop(), 30000);
+                }}
+                style={{
+                  position: "absolute",
+                  bottom: "0.75rem",
+                  right: "0.75rem",
+                  background: "rgba(200,255,0,0.1)",
+                  border: "1px solid rgba(200,255,0,0.3)",
+                  borderRadius: "50%",
+                  width: "36px",
+                  height: "36px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: LIME,
+                  fontSize: "1rem"
+                }}
+                title="Speak your idea"
+              >
+                🎤
+              </button>
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "0.9rem" }}>
               <button style={{ ...G.btn, opacity: (!idea.trim() || loading) ? 0.25 : 1 }} onClick={ignite} disabled={!idea.trim() || loading}>{loading ? "LOADING…" : "IGNITE →"}</button>
               <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "10px" }}>⌘ + Enter</span>
@@ -1984,7 +2258,41 @@ export default function App() {
         {phase === "output-select" && (
           <div style={{ animation: "fadeIn .3s ease" }}>
             {ideaScore && (
-              <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.8rem" }}>
+              <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.8rem", position: "relative", overflow: "hidden" }}>
+                {/* Score celebration particles */}
+                {ideaScore.score >= 80 && (
+                  <>
+                    <style>{`
+                      @keyframes particle {
+                        0% { transform: translate(0, 0) scale(1); opacity: 1; }
+                        100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
+                      }
+                    `}</style>
+                    {Array.from({ length: 20 }).map((_, i) => (
+                      <div key={i} style={{
+                        position: "absolute",
+                        width: "6px",
+                        height: "6px",
+                        borderRadius: "50%",
+                        background: LIME,
+                        top: "50%",
+                        left: "50%",
+                        animation: `particle 1s ease-out ${i * 0.05}s forwards`,
+                        pointerEvents: "none",
+                        "--tx": `${(Math.random() - 0.5) * 200}px`,
+                        "--ty": `${(Math.random() - 0.5) * 200}px`
+                      } as React.CSSProperties} />
+                    ))}
+                    <div style={{
+                      position: "absolute",
+                      top: "50%",
+                      left: "50%",
+                      transform: "translate(-50%, -50%)",
+                      fontSize: "3rem",
+                      animation: "pulse 0.5s ease"
+                    }}>🎉</div>
+                  </>
+                )}
                 <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "0.7rem" }}>
                   <div style={{ fontSize: "2rem", fontWeight: "900", color: scoreColor(ideaScore.score), lineHeight: 1, fontFamily: "monospace" }}>{ideaScore.score}%</div>
                   <div style={{ flex: 1 }}><div style={{ color: scoreColor(ideaScore.score), fontSize: "0.63rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>{(ideaScore.label || "").toUpperCase()}</div><div style={{ color: "rgba(255,255,255,0.78)", fontSize: "0.76rem", marginTop: "4px", lineHeight: "1.5", fontFamily: "monospace" }}>{ideaScore.verdict}</div></div>
@@ -1993,6 +2301,37 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.9rem", borderTop: "1px solid #1c1c1c", paddingTop: "0.85rem", marginTop: "0.85rem", fontFamily: "monospace" }}>
                   <div><div style={{ color: PURPLE, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>STRENGTHS</div>{(ideaScore.strengths || []).map((s, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>→ {s}</div>)}</div>
                   <div><div style={{ color: PINK, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>GAPS</div>{(ideaScore.gaps || []).map((g, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>─ {g}</div>)}</div>
+                </div>
+              </div>
+            )}
+
+            {/* VALIDATION BADGE - Shows when core deliverables complete */}
+            {outputs.blueprint && outputs.actionplan && (
+              <div style={{
+                background: "linear-gradient(135deg, rgba(200, 255, 0, 0.15), rgba(0, 255, 170, 0.1))",
+                border: "1px solid rgba(200, 255, 0, 0.4)",
+                borderRadius: "8px",
+                padding: "1rem 1.25rem",
+                marginBottom: "1.5rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "1rem",
+                animation: "fadeIn .3s ease"
+              }}>
+                <div style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "50%",
+                  background: "rgba(200, 255, 0, 0.2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.5rem"
+                }}>✓</div>
+                <div>
+                  <div style={{ color: LIME, fontSize: "0.65rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>IDEA VALIDATED</div>
+                  <div style={{ color: "#fff", fontSize: "0.85rem", fontWeight: "bold", fontFamily: "monospace", marginTop: "2px" }}>Core deliverables ready for execution</div>
+                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.7rem", fontFamily: "monospace", marginTop: "4px" }}>Blueprint + 30-Day Plan completed</div>
                 </div>
               </div>
             )}
