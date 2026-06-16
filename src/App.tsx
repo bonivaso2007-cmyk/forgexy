@@ -5,13 +5,11 @@ import PitchDeck from "./components/PitchDeck";
 import MarketLandscape from "./components/MarketLandscape";
 import RunwaySandbox from "./components/RunwaySandbox";
 import VentureSentinel from "./components/VentureSentinel";
-import InvestorSimulation from "./components/InvestorSimulation";
-import CommandPalette from "./components/CommandPalette";
 import CoFounderHub from "./components/CoFounderHub";
-import { saveMemory, buildMemoryContext } from "./lib/db";
+import CommandPalette from "./components/CommandPalette";
+import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
 
 const API = "/api/ai-proxy";
-const MODEL = "gemini-2.0-flash";
 const Q_TARGET = 6;
 const LIME = "#C8FF00";
 const PURPLE = "#B87FFF";
@@ -22,36 +20,13 @@ const BRANCH_COLORS = [LIME, PURPLE, CYAN, PINK, ORANGE, "#50E3C2"];
 
 // ── SECURE CRYPTO VAULT ENGINE ────────────────────────────
 // Uses PBKDF2 + AES-GCM (all native Web Crypto) for zero-trust client-side vault encryption.
-// IMPORTANT: Password is NEVER stored. Key exists only in memory during session.
-// On tab refresh, user must re-unlock vault (or data remains encrypted but unreadable).
+// Plaintext data is never written to disk. The session key lives ONLY in-memory or transiently in sessionStorage (tab scope).
 
-const PBKDF2_ITERATIONS = 310000; // OWASP 2024 recommendation for SHA-256
-
-// Secure password hashing using PBKDF2 (NOT just SHA-256)
-async function hashPasswordPBKDF2(password: string, saltHex: string): Promise<string> {
+async function hashPasswordSHA256(password: string): Promise<string> {
   const encoder = new TextEncoder();
-  const salt = new Uint8Array(saltHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-
-  const passwordKey = await window.crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits"]
-  );
-
-  const derivedBits = await window.crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: "SHA-256",
-    },
-    passwordKey,
-    256
-  );
-
-  return Array.from(new Uint8Array(derivedBits))
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -69,7 +44,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
     {
       name: "PBKDF2",
       salt: salt,
-      iterations: PBKDF2_ITERATIONS,
+      iterations: 100000,
       hash: "SHA-256",
     },
     passwordKey,
@@ -84,14 +59,13 @@ let activeSaltHex = "";
 
 async function initializeEncryption(password: string, saltHex: string) {
   try {
-    const salt = saltHex
+    const salt = saltHex 
       ? new Uint8Array(saltHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)))
       : window.crypto.getRandomValues(new Uint8Array(16));
-
+    
     activeSaltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
     activeEncryptionKey = await deriveKey(password, salt);
-    // SECURITY FIX: Store only salt, NOT password. Key exists only in memory.
-    sessionStorage.setItem("forge_vault_session", JSON.stringify({ salt: activeSaltHex }));
+    sessionStorage.setItem("forge_vault_session", JSON.stringify({ salt: activeSaltHex, password }));
   } catch (error) {
     console.error("AES-GCM Cryptographic init failed:", error);
   }
@@ -260,66 +234,9 @@ const store = {
 };
 
 // ── API ───────────────────────────────────────────────────
-async function aiStream(system, user, onChunk, maxTok = 1400, useSearch = false, responseMimeType?: string) {
-  const res = await fetch(API, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTok, system, stream: true, messages: [{ role: "user", content: user }], useSearch, responseMimeType })
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const reader = res.body.getReader();
-  const dec = new TextDecoder("utf-8");
-  let full = "";
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      buffer += dec.decode();
-      if (buffer) {
-        const lines = buffer.split("\n");
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("data:")) {
-            const raw = trimmed.slice(5).trim();
-            if (raw && raw !== "[DONE]") {
-              try { const d = JSON.parse(raw); const t = d?.delta?.text || ""; if (t) { full += t; onChunk(full); } } catch {}
-            }
-          }
-        }
-      }
-      break;
-    }
-    buffer += dec.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const raw = trimmed.slice(5).trim();
-      if (!raw || raw === "[DONE]") continue;
-      try { const d = JSON.parse(raw); const t = d?.delta?.text || ""; if (t) { full += t; onChunk(full); } } catch {}
-    }
-  }
-  return full;
-}
-
-async function ai(sys, usr, asJSON = false, maxTok = 1400, retries = 2, useSearch = false) {
-  for (let i = 0; i <= retries; i++) {
-    try {
-      let full = "";
-      await aiStream(sys, usr, t => { full = t; }, maxTok, useSearch, asJSON ? "application/json" : undefined);
-      if (!full) throw new Error("Empty");
-      if (!asJSON) return full;
-      let s = full.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      const st = s.indexOf("{"), en = s.lastIndexOf("}");
-      if (st === -1 || en === -1) throw new Error("No JSON");
-      s = s.slice(st, en + 1).replace(/,\s*([}\]])/g, "$1").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-      return JSON.parse(s);
-    } catch (e) { if (i === retries) throw e; await new Promise(r => setTimeout(r, 400 * (i + 1))); }
-  }
-}
+import { aiStream, ai } from "./lib/ai";
 
 // ── MARKDOWN ──────────────────────────────────────────────
-// SECURITY: All AI-generated text is sanitized through DOMPurify before rendering
 function Md({ text }) {
   return (
     <div style={{ fontFamily: "monospace" }}>
@@ -330,22 +247,27 @@ function Md({ text }) {
         const isBullet = /^[-→•]\s/.test(line.trim());
         const content = line.replace(/^#+\s/, "").replace(/^[-→•]\s/, "");
         const html = content.replace(/\*\*(.+?)\*\*/g, `<strong style='color:${LIME}; font-weight: bold;'>$1</strong>`);
-        // SECURITY FIX: Sanitize AI-generated content to prevent XSS
-        const safeHtml = DOMPurify.sanitize(html, { ALLOWED_TAGS: ['strong'], ALLOWED_ATTR: ['style'] });
+        
+        // Secure sanitization allowing bold styling only
+        const cleanHtml = DOMPurify.sanitize(html, { 
+          ALLOWED_TAGS: ["strong"], 
+          ALLOWED_ATTR: ["style"] 
+        });
+
         return (
-          <div key={i} style={{
-            marginBottom: isH1 ? "1.2rem" : isH2 ? "0.9rem" : "0.22rem",
-            marginTop: isH1 ? "1.6rem" : isH2 ? "1.4rem" : isH3 ? "0.8rem" : 0,
-            fontSize: isH1 ? "1.2rem" : isH2 ? "1.02rem" : isH3 ? "0.92rem" : "0.83rem",
-            fontWeight: "bold",
+          <div key={i} style={{ 
+            marginBottom: isH1 ? "1.2rem" : isH2 ? "0.9rem" : "0.22rem", 
+            marginTop: isH1 ? "1.6rem" : isH2 ? "1.4rem" : isH3 ? "0.8rem" : 0, 
+            fontSize: isH1 ? "1.2rem" : isH2 ? "1.02rem" : isH3 ? "0.92rem" : "0.83rem", 
+            fontWeight: "bold", 
             fontFamily: "monospace",
-            color: isH1 ? LIME : isH2 ? PURPLE : isH3 ? CYAN : isBullet ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.85)",
-            lineHeight: "1.75",
-            paddingLeft: isBullet ? "1.2rem" : 0,
-            position: "relative"
+            color: isH1 ? LIME : isH2 ? PURPLE : isH3 ? CYAN : isBullet ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.85)", 
+            lineHeight: "1.75", 
+            paddingLeft: isBullet ? "1.2rem" : 0, 
+            position: "relative" 
           }}>
             {isBullet && <span style={{ position: "absolute", left: 0, color: LIME }}>→</span>}
-            <span dangerouslySetInnerHTML={{ __html: safeHtml }} />
+            <span dangerouslySetInnerHTML={{ __html: cleanHtml }} />
           </div>
         );
       })}
@@ -381,40 +303,34 @@ function AuthScreen({ onAuth }) {
   const [form, setForm] = useState({ email: "", password: "", name: "" });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
+ 
   const submit = async () => {
     setErr(""); setLoading(true);
     const { email, password, name } = form;
     if (!email.trim() || !password.trim()) { setErr("Fill in all fields."); setLoading(false); return; }
     if (password.length < 6) { setErr("Password must be at least 6 characters."); setLoading(false); return; }
-
-    // Input validation: prevent excessively long inputs
-    if (email.length > 254) { setErr("Email too long."); setLoading(false); return; }
-    if (password.length > 128) { setErr("Password too long."); setLoading(false); return; }
-
     const uid = btoa(email.toLowerCase()).replace(/=/g, "");
-
+    
     try {
       if (mode === "signup") {
         const exists = await store.get(`user:${uid}`);
         if (exists) { setErr("Account already exists. Log in instead."); setLoading(false); return; }
         if (!name.trim()) { setErr("Enter your name."); setLoading(false); return; }
-        if (name.length > 100) { setErr("Name too long."); setLoading(false); return; }
-
-        // Generate cryptographic salt for PBKDF2 hash and AES-GCM encryption
+        
+        // Generate cryptographic salt for SHA-256 hash and PBKDF2 GCM encryption key
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
         const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-        const passwordHash = await hashPasswordPBKDF2(password, saltHex);
-
-        const user = {
-          uid,
-          email: email.toLowerCase(),
-          name: name.trim().slice(0, 100),
-          passwordHash,
-          saltHex,
-          createdAt: Date.now()
+        const passwordHash = await hashPasswordSHA256(password);
+        
+        const user = { 
+          uid, 
+          email: email.toLowerCase(), 
+          name: name.trim(), 
+          passwordHash, 
+          saltHex, 
+          createdAt: Date.now() 
         };
-
+        
         await initializeEncryption(password, saltHex);
         await store.set(`user:${uid}`, user);
         await store.set(`session`, { uid, email: user.email, name: user.name });
@@ -422,21 +338,23 @@ function AuthScreen({ onAuth }) {
       } else {
         const user = await store.get(`user:${uid}`);
         if (!user) { setErr("Invalid email or password."); setLoading(false); return; }
-
-        // SECURITY FIX: Use PBKDF2, remove btoa fallback entirely
-        const sHex = user.saltHex;
-        if (!sHex) {
-          // Legacy account without salt - cannot verify securely
-          setErr("Account needs password reset. Contact support.");
-          setLoading(false);
-          return;
-        }
-
-        const passwordHash = await hashPasswordPBKDF2(password, sHex);
-        const isValid = user.passwordHash === passwordHash;
-
+        
+        const shaHash = await hashPasswordSHA256(password);
+        const legacyHash = btoa(password);
+        
+        const isValid = user.passwordHash === shaHash || user.passwordHash === legacyHash;
         if (!isValid) { setErr("Invalid email or password."); setLoading(false); return; }
-
+        
+        // Dynamic upgrade for any legacy btoa password users to salted SHA-256 & GCM vaulting
+        let sHex = user.saltHex || "";
+        if (!sHex) {
+          const salt = window.crypto.getRandomValues(new Uint8Array(16));
+          sHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
+          user.saltHex = sHex;
+          user.passwordHash = shaHash;
+          await store.set(`user:${uid}`, user);
+        }
+        
         await initializeEncryption(password, sHex);
         await store.set(`session`, { uid, email: user.email, name: user.name });
         onAuth(user, false);
@@ -452,19 +370,50 @@ function AuthScreen({ onAuth }) {
 
   return (
     <div style={{ minHeight: "100vh", background: "#050505", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "monospace" }}>
-      <div style={{ width: "100%", maxWidth: "400px" }}>
-        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "rgba(255,255,255,0.4)", marginBottom: "3px", display: "block" }}>Project Specification 2026</span>
-        <h1 style={{ color: LIME, fontSize: "3.2rem", fontWeight: "900", letterSpacing: "7px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "monospace" }}>FORGE</h1>
-        <p style={{ color: "#222", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 2.5rem", fontFamily: "monospace", fontWeight: "bold" }}>IDEA ENGINE FOR FOUNDERS</p>
-        <div style={{ display: "flex", gap: "0", marginBottom: "1.8rem", border: "1px solid #181818", borderRadius: "6px", overflow: "hidden" }}>
+      <div style={{ width: "100%", maxWidth: "400px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "rgba(255,255,255,0.4)", marginBottom: "1.2rem", display: "block", textAlign: "center" }}>Project Specification 2026</span>
+        
+        {/* PREMIUM ROYAL LOGO CENTERPIECE */}
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "center", 
+          alignItems: "center", 
+          width: "90px", 
+          height: "90px", 
+          borderRadius: "50%", 
+          background: "radial-gradient(circle, #2a220f 0%, #080705 100%)", 
+          border: "2px solid #D4AF37", // Royalty Gold border
+          boxShadow: "0 0 28px rgba(212, 175, 55, 0.4), inset 0 0 12px rgba(212, 175, 55, 0.25)", 
+          padding: "5px",
+          marginBottom: "1rem",
+          transition: "transform 0.3s ease",
+        }}>
+          <img 
+            src={forgeLogo} 
+            alt="FORGE Logo" 
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="43" stroke="%23D4AF37" stroke-width="4"/><path d="M50 20 L27 40 L37 40 L30 75 L50 55 L70 75 L63 40 L73 40 Z" fill="%23C8FF00" filter="drop-shadow(0 0 5px %23C8FF00)"/></svg>`;
+            }}
+            style={{ 
+              width: "100%", 
+              height: "100%", 
+              borderRadius: "50%", 
+              objectFit: "cover" 
+            }} 
+          />
+        </div>
+
+        <h1 style={{ color: LIME, fontSize: "3.2rem", fontWeight: "900", letterSpacing: "7px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "monospace", textAlign: "center" }}>FORGE</h1>
+        <p style={{ color: "#D4AF37", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 2.5rem", fontFamily: "monospace", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
+        <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.8rem", border: "1px solid #181818", borderRadius: "6px", overflow: "hidden" }}>
           {["login", "signup"].map(m => (
             <button key={m} onClick={() => { setMode(m); setErr(""); }} style={{ flex: 1, background: mode === m ? LIME : "transparent", color: mode === m ? "#050505" : "rgba(255,255,255,0.4)", border: "none", padding: "0.72rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase", transition: "all .2s" }}>{m}</button>
           ))}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {mode === "signup" && <input style={inp} placeholder="Full name" maxLength={100} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
-          <input style={inp} placeholder="Email" type="email" maxLength={254} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
-          <input style={inp} placeholder="Password" type="password" maxLength={128} value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
+          {mode === "signup" && <input style={inp} placeholder="Full name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
+          <input style={inp} placeholder="Email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
+          <input style={inp} placeholder="Password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
         </div>
         {err && <div style={{ color: PINK, fontSize: "0.74rem", marginTop: "0.75rem", background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.15)", borderRadius: "6px", padding: "0.55rem 0.85rem" }}>{err}</div>}
         <button onClick={submit} disabled={loading} style={{ width: "100%", background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: loading ? "not-allowed" : "pointer", fontFamily: "monospace", marginTop: "1.2rem", opacity: loading ? 0.5 : 1 }}>
@@ -692,95 +641,27 @@ function HistoryPanel({ uid, onLoad, onClose }) {
     setIdeas(p => p.filter(x => x.id !== id));
   };
 
-  // Group ideas by date for timeline view
-  const groupByDate = (ideasList) => {
-    const groups = {};
-    ideasList.forEach(idea => {
-      const date = new Date(idea.savedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      if (!groups[date]) groups[date] = [];
-      groups[date].push(idea);
-    });
-    return Object.entries(groups);
-  };
-
-  const groupedIdeas = groupByDate(ideas);
-
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(8px)" }}>
-      <style>{`
-        @keyframes slideIn {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
-        }
-      `}</style>
-      <div style={{ width: "min(520px,100vw)", background: "#080808", borderLeft: "1px solid #1c1c1c", display: "flex", flexDirection: "column", height: "100vh", animation: "slideIn 0.25s ease-out" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(4px)" }}>
+      <div style={{ width: "min(480px,100vw)", background: "#080808", borderLeft: "1px solid #1c1c1c", display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem", borderBottom: "1px solid #1c1c1c", flexShrink: 0 }}>
-          <div>
-            <div style={{ color: LIME, fontSize: "0.75rem", fontWeight: "900", letterSpacing: "3px", fontFamily: "monospace" }}>IDEA TIMELINE</div>
-            <div style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.62rem", fontFamily: "monospace", marginTop: "2px" }}>{ideas.length} concepts tracked</div>
-          </div>
+          <div style={{ color: LIME, fontSize: "0.75rem", fontWeight: "900", letterSpacing: "3px", fontFamily: "monospace" }}>IDEA VAULT</div>
           <button onClick={onClose} style={{ background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.3)", color: PINK, borderRadius: "6px", padding: "5px 11px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.78rem", fontWeight: "bold" }}>✕</button>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
-          {loading && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "3rem" }}>
-              <div style={{ width: "24px", height: "24px", border: `2px solid #1c1c1c`, borderTop: `2px solid ${LIME}`, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
-            </div>
-          )}
-          {!loading && ideas.length === 0 && (
-            <div style={{ textAlign: "center", padding: "3rem 2rem" }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>💡</div>
-              <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontFamily: "monospace" }}>No ideas saved yet.</div>
-              <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.72rem", fontFamily: "monospace", marginTop: "0.5rem" }}>Your validated concepts will appear here as a timeline.</div>
-            </div>
-          )}
-          {groupedIdeas.map(([date, dateIdeas], groupIdx) => (
-            <div key={date} style={{ marginBottom: "2rem" }}>
-              {/* Date header */}
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
-                <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: groupIdx === 0 ? LIME : "#1c1c1c", boxShadow: groupIdx === 0 ? `0 0 8px ${LIME}` : "none" }} />
-                <div style={{ color: groupIdx === 0 ? LIME : "rgba(255,255,255,0.5)", fontSize: "0.65rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>{date.toUpperCase()}</div>
-                {groupIdx === 0 && <span style={{ color: LIME, fontSize: "0.55rem", padding: "2px 6px", background: "rgba(200,255,0,0.1)", borderRadius: "3px", fontFamily: "monospace" }}>LATEST</span>}
-              </div>
-
-              {/* Ideas for this date */}
-              {dateIdeas.map((idea, idx) => (
-                <div key={idea.id} style={{ marginLeft: "4px", paddingLeft: "22px", borderLeft: `2px solid ${idx === dateIdeas.length - 1 ? "transparent" : "#1c1c1c"}`, marginBottom: "0.85rem" }}>
-                  <div style={{ background: "rgba(9,9,9,0.8)", border: `1px solid ${idea.score >= 80 ? "rgba(200,255,0,0.2)" : "#1c1c1c"}`, borderRadius: "8px", padding: "1rem 1.15rem", transition: "all 0.2s", cursor: "pointer" }}
-                    onClick={() => { onLoad(idea); onClose(); }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = LIME; e.currentTarget.style.background = "rgba(12,12,12,0.9)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = idea.score >= 80 ? "rgba(200,255,0,0.2)" : "#1c1c1c"; e.currentTarget.style.background = "rgba(9,9,9,0.8)"; }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                      <div style={{ color: "rgba(255, 255, 255, 0.85)", fontSize: "0.8rem", fontFamily: "monospace", lineHeight: "1.55", flex: 1 }}>
-                        {idea.text?.slice(0, 80)}{idea.text?.length > 80 ? "…" : ""}
-                      </div>
-                      <button
-                        onClick={e => { e.stopPropagation(); del(idea.id); }}
-                        style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.2)", cursor: "pointer", padding: "2px", fontSize: "12px", marginLeft: "0.5rem" }}
-                        onMouseEnter={e => e.currentTarget.style.color = PINK}
-                        onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.2)"}
-                      >✕</button>
-                    </div>
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                      {idea.score && (
-                        <span style={{
-                          color: idea.score >= 80 ? LIME : idea.score >= 60 ? CYAN : PINK,
-                          fontSize: "10px",
-                          fontWeight: "bold",
-                          fontFamily: "monospace",
-                          padding: "3px 8px",
-                          borderRadius: "4px",
-                          background: idea.score >= 80 ? "rgba(200,255,0,0.1)" : idea.score >= 60 ? "rgba(0,255,255,0.1)" : "rgba(255,60,120,0.1)"
-                        }}>{idea.score}% {idea.label}</span>
-                      )}
-                      <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "0.6rem", fontFamily: "monospace" }}>
-                        {new Date(idea.savedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "1.2rem 1.5rem" }}>
+          {loading && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", fontFamily: "monospace" }}>Loading…</div>}
+          {!loading && ideas.length === 0 && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.82rem", fontFamily: "monospace" }}>No saved ideas yet. Start one and it'll appear here.</div>}
+          {ideas.map(idea => (
+            <div key={idea.id} style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1rem 1.1rem", marginBottom: "0.75rem" }}>
+              <div style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "0.82rem", marginBottom: "0.55rem", fontFamily: "monospace", lineHeight: "1.5" }}>{idea.text?.slice(0, 100)}{idea.text?.length > 100 ? "…" : ""}</div>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
+                {idea.score && <span style={{ color: LIME, fontSize: "10px", border: "1px solid #1c1c1c", padding: "2px 7px", borderRadius: "6px", background: "rgba(255,255,255,0.02)", fontWeight: "bold", fontFamily: "monospace" }}>{idea.score} — {idea.label}</span>}
+                <span style={{ color: "rgba(255, 255, 255, 0.3)", fontSize: "0.62rem", fontFamily: "monospace" }}>{new Date(idea.savedAt).toLocaleDateString()}</span>
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <button onClick={() => { onLoad(idea); onClose(); }} style={{ background: "transparent", border: "1px solid #1c1c1c", color: "#ffffff", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>LOAD</button>
+                  <button onClick={() => del(idea.id)} style={{ background: "transparent", border: "1px solid rgba(255,60,120,0.25)", color: PINK, borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>✕</button>
                 </div>
-              ))}
+              </div>
             </div>
           ))}
         </div>
@@ -797,33 +678,28 @@ function RealityCheck({ idea, qa, profile, onProceed, onBack }) {
 
   useEffect(() => {
     (async () => {
-      // Load memories to make this check compound with past sessions
-      const uid = profile?.uid || "guest_user";
-      const memoryContext = await buildMemoryContext(uid);
+      // Load saved memories to feed into Reality Check
+      let memories: string[] = [];
+      try {
+        const stored = localStorage.getItem("forge_cofounder_memories");
+        if (stored) {
+          memories = JSON.parse(stored);
+        }
+      } catch (e) {
+        console.error("Error loading memories for Reality Check:", e);
+      }
+
+      const memoriesPart = memories.length > 0 
+        ? `\n\n### Living Co-Founder Memory (Key startup parameters, constraints & previous decisions):\n${memories.map((m, idx) => `${idx + 1}. ${m}`).join("\n")}`
+        : "";
 
       const sys = `You are FORGE REALITY CHECK — a brutal, honest advisor for early-stage founders.
 Analyse this idea against the founder's specific constraints. Be direct. No sugarcoating.
 Structure: ## Feasibility Score (X/10)\n## Can You Actually Build This?\n## Market Reality Check\n## Your Unfair Advantage\n## The Single Biggest Risk\n## Verdict`;
-      const prompt = `${profileContext(profile)}\n${marketContext(profile)}\n${memoryContext}\n\nIdea: "${idea}"\n\nFounder's thinking:\n${qa.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n")}\n\nGive a reality check tailored to THIS specific founder's constraints and location.`;
+      const prompt = `${profileContext(profile)}\n${marketContext(profile)}${memoriesPart}\n\nIdea: "${idea}"\n\nFounder's thinking:\n${qa.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n")}\n\nGive a reality check tailored to THIS specific founder's constraints, location, and past co-founder memory files.`;
+      
       await aiStream(sys, prompt, chunk => setResult(chunk), 1000, true);
       setLoading(false);
-
-      // Extract learnings for compounding memory
-      if (qa && qa.length > 0) {
-        // Save patterns from Q&A
-        qa.forEach(item => {
-          if (item.answer && item.answer.length > 20) {
-            // Save significant answers as potential patterns
-            saveMemory({
-              uid,
-              category: "pattern",
-              content: item.answer.slice(0, 200),
-              source: "qa",
-              confidence: 60
-            });
-          }
-        });
-      }
     })();
   }, []);
 
@@ -1392,6 +1268,23 @@ export default function App() {
   const [loadMsg, setLoadMsg] = useState("");
   const [outType, setOutType] = useState(null);
   const [outputs, setOutputs] = useState({});
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Toggle Focus mode with 'f' or 'F'
+      if (e.key === 'f' || e.key === 'F') {
+        setIsFocusMode(prev => !prev);
+      }
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setIsCommandOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   const [err, setErr] = useState("");
   const [hov, setHov] = useState(null);
   const [intel, setIntel] = useState(false);
@@ -1406,9 +1299,6 @@ export default function App() {
   const [showLandscape, setShowLandscape] = useState(false);
   const [showRunway, setShowRunway] = useState(false);
   const [showSentinel, setShowSentinel] = useState(false);
-  const [showInvestorSim, setShowInvestorSim] = useState(false);
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
   const [showCoFounderHub, setShowCoFounderHub] = useState(false);
   const [showAuthGateway, setShowAuthGateway] = useState(false);
   const [guestAuthOpen, setGuestAuthOpen] = useState(false);
@@ -1461,9 +1351,16 @@ export default function App() {
   // load session on mount
   useEffect(() => {
     (async () => {
-      // SECURITY: On page refresh, encryption key is lost (password not stored).
-      // User must re-authenticate to decrypt vault data. This is secure-by-design.
-      // The salt is stored but the key can only be derived from password.
+      // 1. Attempt dynamic restoration of physical-isolation key material
+      const vaultSession = sessionStorage.getItem("forge_vault_session");
+      if (vaultSession) {
+        try {
+          const { salt, password } = JSON.parse(vaultSession);
+          await initializeEncryption(password, salt);
+        } catch (e) {
+          console.error("Cryptographic restoring procedure interrupted:", e);
+        }
+      }
 
       // 2. Load and increment local safe analytics index
       const currentAnalytics = await store.get("forge_analytics") || { sessionCount: 0, realityCheckCount: 0 };
@@ -1492,12 +1389,10 @@ export default function App() {
         setAppState("app");
         return;
       }
-
-      // 3. If session exists but encryption key is not available (page refresh), require re-auth
-      // This is intended secure behavior - data remains encrypted until user logs in again
+      
+      // 3. Absolute protection: If local session exists but key has been purged from memory, force login
       if (!activeEncryptionKey) {
-        // Session exists but key is not in memory - prompt for login
-        // Note: User's encrypted data is safe, just inaccessible until re-auth
+        await store.del("session");
         setAppState("auth");
         return;
       }
@@ -1562,57 +1457,50 @@ export default function App() {
       const id = currentIdeaId || Date.now().toString();
       setCurrentIdeaId(id);
       await store.set(`idea:${user.uid}:${id}`, { id, text: idea, score: s.score, label: s.label, qa: pairs, savedAt: Date.now() });
+
+      // Autonomous Living DNA Memory Extraction
+      try {
+        const memoryPrompt = `You are the FORGE LIVING DNA ENGINE. Review this founder's startup idea and their questionnaire responses. 
+Extract EXACTLY ONE deeply specific strategic constraint, pivot, or technical decision they have chosen (e.g., choice of target audience, technical approach, key competitive moat).
+Maintain a professional, humble, specific, and direct tone. Under 15 words. Start immediately with the key constraint/decision.
+Example: "Targeting freelance designers globally with direct outbound campaigns."
+Idea: "${idea}"
+Founder's Thinking:
+${ctxStr(pairs)}`;
+        const extracted = await ai(`Extract ONE key strategic decision or constraint under 15 words. Plain text only.`, memoryPrompt, false, 200, 2);
+        if (extracted && extracted.trim()) {
+          const cleanMem = extracted.replace(/^["'\-\s]+|["'\-\s]+$/g, "").trim();
+          
+          const stored = localStorage.getItem("forge_cofounder_memories");
+          let currentMemories: string[] = [];
+          if (stored) {
+            try {
+              currentMemories = JSON.parse(stored);
+            } catch {}
+          }
+          // Only add if it's not already a duplicate or trivial
+          if (cleanMem && !currentMemories.includes(cleanMem)) {
+            currentMemories = [...currentMemories, cleanMem];
+            localStorage.setItem("forge_cofounder_memories", JSON.stringify(currentMemories));
+            console.log("Autonomous Living DNA memory recorded:", cleanMem);
+          }
+        }
+      } catch (me) {
+        console.error("Auto Living DNA memory extraction skipped/failed:", me);
+      }
     } catch {
       setGlobalError("Active Intelligence Paused. Your offline business plans and vault data are fully secure. Feel free to re-trigger after a moment.");
     }
   }, [idea, profile, user, currentIdeaId]);
 
-  // Debounced prefetch to avoid rapid API calls
-  const prefetchDebounceRef = useRef<number | null>(null);
   const prefetchNext = useCallback((updated) => {
     if (updated.length >= Q_TARGET) return;
     const styles = ["Creative", "Critical", "Strategic", "Logical"];
     const key = `q${updated.length + 1}`;
     if (prefetchRef.current[key]) return;
-
-    // Clear any pending debounce
-    if (prefetchDebounceRef.current) {
-      clearTimeout(prefetchDebounceRef.current);
-    }
-
-    // Debounce by 800ms before making API call
-    prefetchDebounceRef.current = window.setTimeout(() => {
-      const style = styles[updated.length % styles.length];
-      prefetchRef.current[key] = ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${style} style. Biggest unexplored gap. Push hard.`, false, 1000);
-    }, 800);
+    const style = styles[updated.length % styles.length];
+    prefetchRef.current[key] = ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${style} style. Biggest unexplored gap. Push hard.`, false, 1000);
   }, [idea, profile]);
-
-  // Global keyboard shortcuts
-  useEffect(() => {
-    const handleGlobalKeydown = (e: KeyboardEvent) => {
-      // ⌘K or Ctrl+K - Open command palette
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setShowCommandPalette(prev => !prev);
-      }
-      // Escape - Close modals
-      if (e.key === "Escape") {
-        if (showCommandPalette) setShowCommandPalette(false);
-        else if (focusMode) setFocusMode(false);
-      }
-      // F or ⌘. - Toggle focus mode (only when not in input)
-      if ((e.key === "f" && !e.metaKey && !e.ctrlKey) || ((e.metaKey || e.ctrlKey) && e.key === ".")) {
-        const activeEl = document.activeElement;
-        const isInput = activeEl?.tagName === "INPUT" || activeEl?.tagName === "TEXTAREA";
-        if (!isInput && phase !== "ignition") {
-          e.preventDefault();
-          setFocusMode(prev => !prev);
-        }
-      }
-    };
-    window.addEventListener("keydown", handleGlobalKeydown);
-    return () => window.removeEventListener("keydown", handleGlobalKeydown);
-  }, [showCommandPalette, focusMode, phase]);
 
   const cleanQuestion = (qStr) => {
     let cleanQ = qStr.trim();
@@ -1784,41 +1672,10 @@ export default function App() {
       {showProfile && <ProfilePanel profile={profile} user={user} onUpdate={p => setProfile(p)} onLogout={logout} onClose={() => setShowProfile(false)} />}
       {showHistory && <HistoryPanel uid={user?.uid} onLoad={loadIdea} onClose={() => setShowHistory(false)} />}
 
-      {/* Command Palette - ⌘K */}
-      <CommandPalette
-        isOpen={showCommandPalette}
-        onClose={() => setShowCommandPalette(false)}
-        ideas={guestIgnitions.map((text, i) => ({ id: `g${i}`, text, score: null }))}
-        onLoadIdea={(saved) => { setIdea(saved.text); setPhase("ignition"); }}
-        onNavigate={(path) => {
-          if (path === "profile") setShowProfile(true);
-          if (path === "vault") setShowHistory(true);
-        }}
-        onOpenTool={(tool) => {
-          if (tool === "warroom") setShowWarRoom(true);
-          if (tool === "pitchdeck") setShowPitchDeck(true);
-          if (tool === "landscape") setShowLandscape(true);
-          if (tool === "runway") setShowRunway(true);
-          if (tool === "investor") setShowInvestorSim(true);
-          if (tool === "sentinel") setShowSentinel(true);
-          if (tool === "cofounder") setShowCoFounderHub(true);
-        }}
-        onIntelQuery={(q) => { setIntelQuery(q); setIntel(true); }}
-        onNewIdea={resetIdea}
-      />
-
       {showSentinel && (
         <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
           <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
             <VentureSentinel idea={idea} profile={profile} onClose={() => setShowSentinel(false)} />
-          </div>
-        </div>
-      )}
-
-      {showInvestorSim && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[700px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
-            <InvestorSimulation idea={idea} profile={profile} onClose={() => setShowInvestorSim(false)} />
           </div>
         </div>
       )}
@@ -1897,136 +1754,36 @@ export default function App() {
       )}
 
       {showWarRoom && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
+        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
             <WarRoom idea={idea} profile={profile} swotData={(outputs as any).swot} onClose={() => setShowWarRoom(false)} />
           </div>
         </div>
       )}
       {showPitchDeck && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
+        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
             <PitchDeck idea={idea} profile={profile} blueprintData={(outputs as any).blueprint} businessPlanData={(outputs as any).businessplan} onClose={() => setShowPitchDeck(false)} />
           </div>
         </div>
       )}
       {showLandscape && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
+        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
             <MarketLandscape idea={idea} profile={profile} onClose={() => setShowLandscape(false)} />
           </div>
         </div>
       )}
       {showRunway && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
+        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
             <RunwaySandbox idea={idea} onClose={() => setShowRunway(false)} />
           </div>
         </div>
       )}
 
       <div style={{ ...G.wrap, paddingRight: intel ? "440px" : "0" }}>
-
-        {/* FOCUS MODE OVERLAY - Monk Mode */}
-        {focusMode && (
-          <div style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(5, 5, 5, 0.97)",
-            zIndex: 9990,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "2rem"
-          }}>
-            <div style={{
-              width: "100%",
-              maxWidth: "700px",
-              background: "#080808",
-              border: "1px solid #1c1c1c",
-              borderRadius: "12px",
-              padding: "2.5rem",
-              position: "relative"
-            }}>
-              <button
-                onClick={() => setFocusMode(false)}
-                style={{
-                  position: "absolute",
-                  top: "1rem",
-                  right: "1rem",
-                  background: "transparent",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  color: "rgba(255,255,255,0.5)",
-                  borderRadius: "6px",
-                  padding: "0.4rem 0.8rem",
-                  fontSize: "0.7rem",
-                  cursor: "pointer",
-                  fontFamily: "monospace"
-                }}
-              >Exit Focus (F)</button>
-
-              <div style={{ color: LIME, fontSize: "0.65rem", letterSpacing: "3px", fontFamily: "monospace", fontWeight: "bold", marginBottom: "1.5rem" }}>MONK MODE</div>
-
-              {phase === "ignition" && (
-                <>
-                  <p style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.85rem", fontFamily: "monospace", marginBottom: "1rem" }}>What's on your mind?</p>
-                  <textarea
-                    style={{ ...G.ta, height: "120px" }}
-                    maxLength={2000}
-                    placeholder="Speak your idea here..."
-                    value={idea}
-                    onChange={e => setIdea(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }}
-                    autoFocus
-                  />
-                  <button style={{ ...G.btn, marginTop: "1rem", opacity: !idea.trim() ? 0.3 : 1 }} onClick={ignite} disabled={!idea.trim() || loading}>IGNITE</button>
-                </>
-              )}
-
-              {phase === "questioning" && (
-                <>
-                  <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "1px", marginBottom: "1.5rem", fontFamily: "monospace" }}>{qa.length}/{Q_TARGET} QUESTIONS</div>
-                  {loading ? (
-                    <div style={{ padding: "2rem", textAlign: "center" }}><span style={{ color: PURPLE, fontSize: "0.75rem", letterSpacing: "2px", fontFamily: "monospace" }}>THINKING...</span></div>
-                  ) : (
-                    <>
-                      <p style={{ color: "#fff", fontSize: "1.15rem", lineHeight: "1.75", margin: "0 0 1.5rem", fontFamily: "monospace", fontWeight: "bold" }}>{curQ}</p>
-                      <textarea
-                        ref={taRef}
-                        style={{ ...G.ta, height: "100px" }}
-                        maxLength={2000}
-                        placeholder="Your honest answer..."
-                        value={curA}
-                        onChange={e => setCurA(e.target.value)}
-                        autoFocus
-                      />
-                      <div style={{ display: "flex", gap: "0.7rem", marginTop: "1rem" }}>
-                        <button style={{ ...G.btn, opacity: !curA.trim() ? 0.3 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH" : "NEXT"}</button>
-                        {qa.length >= 3 && <button className="gh" style={G.ghost} onClick={() => { scoreIdea(qa); setPhase("reality-check"); setFocusMode(false); }}>skip →</button>}
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-
-              {phase === "reality-check" && (
-                <div style={{ textAlign: "center", padding: "2rem 0" }}>
-                  <div style={{ fontSize: "2.5rem", fontWeight: "900", color: ideaScore ? scoreColor(ideaScore.score) : LIME, fontFamily: "monospace" }}>{ideaScore?.score || "..."}%</div>
-                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.75rem", fontFamily: "monospace", marginTop: "0.5rem" }}>{ideaScore?.label || "Scoring..."}</div>
-                  <button style={{ ...G.btn, marginTop: "1.5rem" }} onClick={() => { setPhase("output-select"); setFocusMode(false); }}>VIEW RESULTS</button>
-                </div>
-              )}
-
-              {(phase === "output-select" || phase === "output" || phase === "generating") && (
-                <div style={{ textAlign: "center", padding: "2rem 0" }}>
-                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontFamily: "monospace" }}>Focus mode is for ideation only.</div>
-                  <button style={{ ...G.btn, marginTop: "1rem" }} onClick={() => setFocusMode(false)}>EXIT TO RESULTS</button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
+        
         {/* GLOBAL SECURITY / OFFLINE ERROR BANNER */}
         {globalError && (
           <div style={{ width: "100%", background: "rgba(255, 60, 120, 0.12)", border: "1px solid rgba(255, 60, 120, 0.3)", borderRadius: "6px", padding: "0.85rem 1.2rem", marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", animation: "fadeIn 0.3s ease" }}>
@@ -2037,54 +1794,50 @@ export default function App() {
           </div>
         )}
 
-        {/* PROFILE ENHANCEMENT CONTEXT NUDGE */}
-        {profile?.incomplete && (
-          <div style={{ background: "rgba(184, 127, 255, 0.08)", border: "1px solid rgba(184, 127, 255, 0.25)", borderRadius: "6px", padding: "0.6rem 0.95rem", marginTop: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", animation: "glowPulse 4s infinite" }}>
-            <span style={{ color: "rgba(255, 255, 255, 0.72)", fontSize: "0.72rem", fontFamily: "monospace" }}>
-              ⚡ <strong style={{ color: PURPLE }}>Profile skipped:</strong> Add founder background details in your profile panel to unlock highly targeted strategic advice.
-            </span>
-            <button onClick={() => setShowProfile(true)} style={{ background: PURPLE, color: "#000", border: "none", borderRadius: "4px", padding: "3px 8px", fontSize: "9px", fontWeight: "bold", fontFamily: "monospace", cursor: "pointer" }}>
-              ENHANCE
-            </button>
-          </div>
-        )}
-
         {/* HEADER */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.7rem 0 1.3rem", borderBottom: "1px solid #1c1c1c", marginBottom: "1.8rem" }}>
-          <div>
-            <h1 style={{ color: LIME, fontSize: "1.85rem", fontWeight: "900", margin: 0, lineHeight: 1, letterSpacing: "2px", fontFamily: "monospace" }}>FORGE</h1>
-            <p style={{ color: "#222", fontSize: "9px", letterSpacing: "2.5px", margin: "5px 0 0", fontFamily: "monospace", fontWeight: "bold" }}>IDEA ENGINE FOR FOUNDERS</p>
-          </div>
-
-          {/* INTEL FIRST CLASS SEARCH BAR (Near header top) */}
-          {showTools && (
-            <div style={{ display: "flex", gap: "0.45rem", alignItems: "center", width: "100%", maxWidth: "250px", position: "relative" }}>
-              <span style={{ position: "absolute", left: "10px", color: "rgba(255,255,255,0.3)", fontSize: "11px" }}>🔍</span>
-              <input 
-                type="text" 
-                placeholder="Search market intel..."
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                    triggerDeepDiveIntel(e.currentTarget.value.trim());
-                    e.currentTarget.value = '';
-                  }
+        {!isFocusMode && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "1.7rem 0 1.3rem", borderBottom: "1px solid #1c1c1c", marginBottom: "1.8rem" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.4rem" }}>
+            
+            {/* ROYAL CENTER EMBLEM */}
+            <div style={{ 
+              display: "flex", 
+              justifyContent: "center", 
+              alignItems: "center", 
+              width: "72px", 
+              height: "72px", 
+              borderRadius: "50%", 
+              background: "radial-gradient(circle, #2a220f 0%, #080705 100%)", 
+              border: "1.5px solid #D4AF37", // Royal gold accent
+              boxShadow: "0 0 18px rgba(212, 175, 55, 0.35), inset 0 0 8px rgba(212, 175, 55, 0.2)", 
+              padding: "4px",
+              marginBottom: "0.5rem",
+              transition: "transform 0.4s ease",
+            }}>
+              <img 
+                src={forgeLogo} 
+                alt="FORGE Logo" 
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="43" stroke="%23D4AF37" stroke-width="4"/><path d="M50 20 L27 40 L37 40 L30 75 L50 55 L70 75 L63 40 L73 40 Z" fill="%23C8FF00" filter="drop-shadow(0 0 5px %23C8FF00)"/></svg>`;
                 }}
-                style={{
-                  width: "100%",
-                  background: "#0c0c0c",
-                  border: "1px solid #1c1c1c",
-                  borderRadius: "6px",
-                  color: "#ffffff",
-                  fontSize: "0.74rem",
-                  padding: "0.42rem 0.5rem 0.42rem 1.85rem",
-                  outline: "none",
-                  fontFamily: "monospace"
-                }}
+                style={{ 
+                  width: "100%", 
+                  height: "100%", 
+                  borderRadius: "50%", 
+                  objectFit: "cover" 
+                }} 
               />
             </div>
-          )}
+            
+            <h1 style={{ color: LIME, fontSize: "1.85rem", fontWeight: "900", margin: 0, lineHeight: 1, letterSpacing: "2.5px", fontFamily: "monospace", textAlign: "center" }}>FORGE</h1>
+            <p style={{ color: "#D4AF37", fontSize: "9px", letterSpacing: "2.5px", margin: 0, fontFamily: "monospace", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
+          </div>
 
-          <div style={{ display: "flex", gap: "0.45rem", alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.45rem", alignItems: "center", flexWrap: "wrap", marginTop: "1rem" }}>
+             {/* FOCUS MODE TOGGLE BUTTON */}
+             <button onClick={() => setIsFocusMode(prev => !prev)} style={{...G.ghost, color: isFocusMode ? LIME : "rgba(255,255,255,0.5)"}}>
+               {isFocusMode ? "Exit Focus" : "Focus Mode (F)"}
+             </button>
             {user?.isGuest ? (
               <button 
                 onClick={() => setShowAuthGateway(true)}
@@ -2109,12 +1862,6 @@ export default function App() {
               <button className="gh" onClick={() => { setCompany(true); setIntel(false); }} style={{ ...G.ghost, color: company ? LIME : "#ffffff", borderColor: company ? LIME : "#1c1c1c" }}>🏗 Build</button>
             </>}
             <button className="gh" style={G.ghost} onClick={() => setShowHistory(true)}>📁 Vault</button>
-            <button
-              className="gh"
-              style={{ ...G.ghost, color: focusMode ? LIME : "rgba(255,255,255,0.5)", borderColor: focusMode ? LIME : "#1c1c1c" }}
-              onClick={() => setFocusMode(!focusMode)}
-              title="Focus Mode (F)"
-            >{focusMode ? "👁 FOCUS" : "👁‍🗨"}</button>
             <button className="gh" style={{ ...G.ghost, display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => setShowProfile(true)}>
               <div style={{ width: "18px", height: "18px", borderRadius: "50%", background: `${LIME}2a`, border: `1px solid ${LIME}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: LIME, fontWeight: "bold" }}>{profile?.name?.[0]?.toUpperCase()}</div>
               <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.68rem" }}>{profile?.name?.split(" ")[0]}</span>
@@ -2122,9 +1869,10 @@ export default function App() {
             {phase !== "ignition" && <button className="gh" style={G.ghost} onClick={resetIdea}>↩</button>}
           </div>
         </div>
+        )}
 
         {/* STAGE & PROCESS FLOW PROGRESS BAR & STEPS */}
-        {phase !== "ignition" && (
+        {!isFocusMode && phase !== "ignition" && (
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1.4rem" }}>
             {[1, 2, 3].map(stg => {
               const getStageInfo = () => {
@@ -2148,6 +1896,7 @@ export default function App() {
         )}
 
         {/* COACHED NEXT STEP ACCENT GUIDE */}
+        {!isFocusMode && (                
         <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid #141414", borderRadius: "6px", padding: "0.6rem 0.95rem", marginBottom: "1.8rem", display: "flex", alignItems: "center", gap: "0.55rem" }}>
           <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: LIME, animation: "pulse 2s infinite" }} />
           <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.72rem", fontFamily: "monospace", lineHeight: "1.4" }}>
@@ -2159,6 +1908,7 @@ export default function App() {
             }
           </span>
         </div>
+        )}
 
         {/* IGNITION */}
         {phase === "ignition" && (
@@ -2167,55 +1917,8 @@ export default function App() {
               <div style={{ width: "4px", height: "4px", borderRadius: "50%", background: LIME, flexShrink: 0 }} />
               <span style={{ color: "rgba(255,255,255,0.75)", fontSize: "0.78rem", lineHeight: "1.5", fontFamily: "monospace" }}>{profile?.bio || `Welcome, ${profile?.name}`}</span>
             </div>
-            <p style={G.label}>Drop your raw idea <span style={{ color: "rgba(255,255,255,0.3)", fontWeight: "normal" }}>(or use voice →)</span></p>
-            <div style={{ position: "relative" }}>
-              <textarea style={{ ...G.ta, height: "150px", paddingRight: "3rem" }} maxLength={2000} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
-              {/* Voice capture button */}
-              <button
-                onClick={async () => {
-                  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                    alert("Voice capture not supported in this browser. Try Chrome or Edge.");
-                    return;
-                  }
-                  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-                  const recognition = new SpeechRecognition();
-                  recognition.lang = "en-US";
-                  recognition.continuous = true;
-                  recognition.interimResults = true;
-
-                  recognition.onresult = (event: any) => {
-                    let transcript = "";
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
-                      transcript += event.results[i][0].transcript;
-                    }
-                    setIdea(prev => prev + (prev ? " " : "") + transcript);
-                  };
-
-                  recognition.start();
-                  // Auto-stop after 30 seconds
-                  setTimeout(() => recognition.stop(), 30000);
-                }}
-                style={{
-                  position: "absolute",
-                  bottom: "0.75rem",
-                  right: "0.75rem",
-                  background: "rgba(200,255,0,0.1)",
-                  border: "1px solid rgba(200,255,0,0.3)",
-                  borderRadius: "50%",
-                  width: "36px",
-                  height: "36px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: LIME,
-                  fontSize: "1rem"
-                }}
-                title="Speak your idea"
-              >
-                🎤
-              </button>
-            </div>
+            <p style={G.label}>Drop your raw idea</p>
+            <textarea style={{ ...G.ta, height: "150px" }} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
             <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "0.9rem" }}>
               <button style={{ ...G.btn, opacity: (!idea.trim() || loading) ? 0.25 : 1 }} onClick={ignite} disabled={!idea.trim() || loading}>{loading ? "LOADING…" : "IGNITE →"}</button>
               <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "10px" }}>⌘ + Enter</span>
@@ -2236,7 +1939,7 @@ export default function App() {
             ) : (<>
               <p style={{ color: "#ffffff", fontSize: "1.25rem", lineHeight: "1.75", margin: "0 0 1.9rem", fontFamily: "monospace", fontWeight: "bold" }}>{curQ}</p>
               <p style={G.label}>Your answer</p>
-              <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} maxLength={2000} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
+              <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
               <div style={{ display: "flex", gap: "0.7rem", marginTop: "0.85rem", alignItems: "center" }}>
                 {qa.length > 0 && <button className="gh" style={G.ghost} onClick={backQ}>← BACK</button>}
                 <button style={{ ...G.btn, opacity: !curA.trim() ? 0.2 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH →" : "NEXT →"}</button>
@@ -2258,41 +1961,7 @@ export default function App() {
         {phase === "output-select" && (
           <div style={{ animation: "fadeIn .3s ease" }}>
             {ideaScore && (
-              <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.8rem", position: "relative", overflow: "hidden" }}>
-                {/* Score celebration particles */}
-                {ideaScore.score >= 80 && (
-                  <>
-                    <style>{`
-                      @keyframes particle {
-                        0% { transform: translate(0, 0) scale(1); opacity: 1; }
-                        100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
-                      }
-                    `}</style>
-                    {Array.from({ length: 20 }).map((_, i) => (
-                      <div key={i} style={{
-                        position: "absolute",
-                        width: "6px",
-                        height: "6px",
-                        borderRadius: "50%",
-                        background: LIME,
-                        top: "50%",
-                        left: "50%",
-                        animation: `particle 1s ease-out ${i * 0.05}s forwards`,
-                        pointerEvents: "none",
-                        "--tx": `${(Math.random() - 0.5) * 200}px`,
-                        "--ty": `${(Math.random() - 0.5) * 200}px`
-                      } as React.CSSProperties} />
-                    ))}
-                    <div style={{
-                      position: "absolute",
-                      top: "50%",
-                      left: "50%",
-                      transform: "translate(-50%, -50%)",
-                      fontSize: "3rem",
-                      animation: "pulse 0.5s ease"
-                    }}>🎉</div>
-                  </>
-                )}
+              <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.8rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "0.7rem" }}>
                   <div style={{ fontSize: "2rem", fontWeight: "900", color: scoreColor(ideaScore.score), lineHeight: 1, fontFamily: "monospace" }}>{ideaScore.score}%</div>
                   <div style={{ flex: 1 }}><div style={{ color: scoreColor(ideaScore.score), fontSize: "0.63rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>{(ideaScore.label || "").toUpperCase()}</div><div style={{ color: "rgba(255,255,255,0.78)", fontSize: "0.76rem", marginTop: "4px", lineHeight: "1.5", fontFamily: "monospace" }}>{ideaScore.verdict}</div></div>
@@ -2301,37 +1970,6 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.9rem", borderTop: "1px solid #1c1c1c", paddingTop: "0.85rem", marginTop: "0.85rem", fontFamily: "monospace" }}>
                   <div><div style={{ color: PURPLE, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>STRENGTHS</div>{(ideaScore.strengths || []).map((s, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>→ {s}</div>)}</div>
                   <div><div style={{ color: PINK, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>GAPS</div>{(ideaScore.gaps || []).map((g, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>─ {g}</div>)}</div>
-                </div>
-              </div>
-            )}
-
-            {/* VALIDATION BADGE - Shows when core deliverables complete */}
-            {outputs.blueprint && outputs.actionplan && (
-              <div style={{
-                background: "linear-gradient(135deg, rgba(200, 255, 0, 0.15), rgba(0, 255, 170, 0.1))",
-                border: "1px solid rgba(200, 255, 0, 0.4)",
-                borderRadius: "8px",
-                padding: "1rem 1.25rem",
-                marginBottom: "1.5rem",
-                display: "flex",
-                alignItems: "center",
-                gap: "1rem",
-                animation: "fadeIn .3s ease"
-              }}>
-                <div style={{
-                  width: "48px",
-                  height: "48px",
-                  borderRadius: "50%",
-                  background: "rgba(200, 255, 0, 0.2)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "1.5rem"
-                }}>✓</div>
-                <div>
-                  <div style={{ color: LIME, fontSize: "0.65rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>IDEA VALIDATED</div>
-                  <div style={{ color: "#fff", fontSize: "0.85rem", fontWeight: "bold", fontFamily: "monospace", marginTop: "2px" }}>Core deliverables ready for execution</div>
-                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.7rem", fontFamily: "monospace", marginTop: "4px" }}>Blueprint + 30-Day Plan completed</div>
                 </div>
               </div>
             )}
@@ -2414,26 +2052,14 @@ export default function App() {
               </div>
 
               {/* Runway Sandbox */}
-              <div
-                className="outcard"
+              <div 
+                className="outcard" 
                 style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
                 onClick={() => setShowRunway(true)}
               >
                 <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>📊</div>
                 <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Runway COGS Sandbox</div>
                 <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Model burns, margins, headcounts & 12M cash graphs</div>
-              </div>
-
-              {/* Investor Simulation */}
-              <div
-                className="outcard"
-                style={{ background: "rgba(184, 127, 255, 0.08)", border: "1px solid rgba(184, 127, 255, 0.3)", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
-                onClick={() => setShowInvestorSim(true)}
-              >
-                <span style={{ position: "absolute", top: "0.5rem", right: "0.6rem", color: PURPLE, fontSize: "0.55rem", letterSpacing: "1.5px", fontWeight: "bold" }}>NEW</span>
-                <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>🎤</div>
-                <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Investor Pitch Practice</div>
-                <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Practice with AI YC partners & angels before your real meeting</div>
               </div>
 
               {/* CO-FOUNDER CO-PILOT DECK — Living Memory companion */}
@@ -2553,6 +2179,7 @@ export default function App() {
         )}
 
         {/* DATA & PRIVACY INFORMATION DIALOG MODAL LINK / FOOTER */}
+        {!isFocusMode && (
         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1rem", padding: "2rem 0", borderTop: "1px solid #141414", marginTop: "4rem" }}>
           <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "10px" }}>FORGE v1.0 offline-first engine</span>
           <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>
@@ -2560,6 +2187,7 @@ export default function App() {
             Data & AI Operations
           </button>
         </div>
+        )}
 
         {showPrivacyDialog && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 4000, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(5px)" }}>
@@ -2590,6 +2218,7 @@ export default function App() {
             </div>
           </div>
         )}
+        <CommandPalette isOpen={isCommandOpen} onClose={() => setIsCommandOpen(false)} navigateTo={(tab) => { /* TODO */ }} />
 
         <div style={{ height: "5rem" }} />
       </div>

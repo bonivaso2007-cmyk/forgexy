@@ -67,7 +67,7 @@ async function startServer() {
         ]
       }`;
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: `Locate 4-6 competitors in or near ${city} offering "${niche}". Place their coordinates closely clustered around the center coordinates of ${city}. Return JSON only.`,
         config: { systemInstruction: sys, temperature: 0.2, responseMimeType: "application/json" }
       });
@@ -103,6 +103,76 @@ async function startServer() {
 
     record.count++;
     next();
+  });
+
+  // API Route: Groq Streaming Proxy
+  app.post("/api/groq-proxy", async (req, res) => {
+    const { messages, max_tokens, system } = req.body;
+    
+    if (!process.env.GROQ_API_KEY) {
+        return res.status(500).json({ error: "GROQ_API_KEY not configured" });
+    }
+
+    try {
+        const groqMessages = [
+            {role: "system", content: system || "You are a helpful assistant"},
+            ...messages
+        ];
+
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "llama-3.3-70b-versatile",
+                messages: groqMessages,
+                max_completion_tokens: max_tokens || 1024,
+                temperature: 1,
+                stream: true
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Groq API error ${response.status}`);
+        }
+
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder("utf-8");
+        
+        while (true) {
+            const { done, value } = await reader!.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            
+            const lines = chunk.split("\n");
+            for (const line of lines) {
+                if (line.trim().startsWith("data: ")) {
+                    const raw = line.slice(5).trim();
+                    if (raw && raw !== "[DONE]") {
+                        try {
+                            const parsed = JSON.parse(raw);
+                            const content = parsed.choices?.[0]?.delta?.content || "";
+                            if (content) {
+                                res.write(`data: ${JSON.stringify({ delta: { text: content } })}\n`);
+                            }
+                        } catch {}
+                    }
+                }
+            }
+        }
+        res.write("data: [DONE]\n");
+        res.end();
+    } catch (e) {
+        console.error("Groq proxy error:", e);
+        res.status(500).json({ error: "Groq proxy error" });
+    }
   });
 
   app.post("/api/ai-proxy", async (req, res) => {
@@ -168,7 +238,7 @@ async function startServer() {
 
       // Call Gemini 3.5 Flash streaming API (or custom specified model)
       const streamResponse = await ai.models.generateContentStream({
-        model: "gemini-2.0-flash",
+        model: "gemini-3.5-flash",
         contents: userPrompt,
         config: config,
       });

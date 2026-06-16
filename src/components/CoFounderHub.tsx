@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { 
-  Brain, ShieldCheck, Mail, Users, Award, Globe, 
-  TrendingUp, Download, Eye, Send, RotateCw, Plus, 
+import { Brain, ShieldCheck, Mail, Users, Award, Globe,
+  TrendingUp, Download, Eye, Send, RotateCw, Plus,
   Volume2, Sparkles, AlertCircle, FileText, CheckCircle2,
   Phone, PhoneOff, Mic, MicOff
 } from "lucide-react";
+import { exportComponentToPDF } from "../lib/pdfExporter";
+import { getSupabase } from "../lib/supabase";
+import InvestorSimulation from "./InvestorSimulation";
+import { aiStream, ai } from "../lib/ai";
+
 
 // Conforming to Forge aesthetic styling
 const LIME = "#C8FF00";
@@ -26,21 +30,37 @@ export default function CoFounderHub({ idea, profile, onClose, onQuestPointsEarn
   const [lang, setLang] = useState<"en" | "sw">("en");
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<"co-pilot" | "live-call" | "data-room" | "outreach" | "discovery" | "progress" | "traction">("co-pilot");
+  const [activeTab, setActiveTab] = useState<"co-pilot" | "live-call" | "data-room" | "outreach" | "discovery" | "progress" | "traction" | "investor-sim">("co-pilot");
 
   // 1. Co-founder Advisory State
-  const [memories, setMemories] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem("forge_cofounder_memories");
-      return saved ? JSON.parse(saved) : [
-        "Identified supplier risk for regional distribution expansion.",
-        "Rejected premium-only pricing strategy in favor of Freemium API tiers.",
-        "Prioritized developer advocacy as primary acquisition channel."
-      ];
-    } catch {
-      return ["Identified supplier risk for global distribution"];
-    }
-  });
+  const [memories, setMemories] = useState<string[]>([]);
+  useEffect(() => {
+    const fetchMemories = async () => {
+      const sb = getSupabase();
+      if (sb) {
+        try {
+          const { data } = await sb.from('founder_memories').select('content');
+          if (data && data.length > 0) {
+            setMemories(data.map(d => d.content));
+            return;
+          }
+        } catch (e) {
+          console.warn("Supabase fetch failed, falling back to local storage:", e);
+        }
+      }
+      
+      // Fallback to localStorage if no Supabase or no records
+      try {
+        const saved = localStorage.getItem("forge_cofounder_memories");
+        if (saved) {
+          setMemories(JSON.parse(saved));
+        }
+      } catch (e) {
+        console.error("Local storage memory restoration failed:", e);
+      }
+    };
+    fetchMemories();
+  }, []);
   const [newMemory, setNewMemory] = useState("");
   const [advisoryText, setAdvisoryText] = useState("");
   const [loadingAdvisory, setLoadingAdvisory] = useState(false);
@@ -290,35 +310,7 @@ Past Rejected Hypotheses & Decisions: [${memories.join("; ")}]
 Write a brief (max 180 words), encouraging yet highly operational daily strategic briefing. Point out 1 proactive threat (such as competitors, regulatory shift or CAC issues) and state 2 highly precise regional tasks the founder should focus on today. Include Swahili proverbs if the location is East Africa, otherwise use local contexts. Use elegant markdown bullet points starting with '→'.`;
 
     try {
-      const res = await fetch("/api/ai-proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system, messages: [{ role: "user", content: userPrompt }], max_tokens: 600 })
-      });
-      if (!res.ok) throw new Error("HTTP-Proxy error");
-      const reader = res.body?.getReader();
-      const dec = new TextDecoder();
-      let full = "";
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = dec.decode(value);
-          const lines = chunk.split("\n");
-          for (const line of lines) {
-            if (line.trim().startsWith("data:")) {
-              const raw = line.slice(5).trim();
-              if (raw && raw !== "[DONE]") {
-                try {
-                  const parsed = JSON.parse(raw);
-                  full += parsed?.delta?.text || "";
-                  setAdvisoryText(full);
-                } catch {}
-              }
-            }
-          }
-        }
-      }
+      await aiStream(system, userPrompt, (full) => setAdvisoryText(full), 600);
     } catch {
       setAdvisoryText("Unable to pull Quantum synaptic advice. Forge local core active.");
     } finally {
@@ -368,17 +360,7 @@ Runway Context: self-funded, stage: ${profile?.stage}.
 Keep it incredibly epic, stating current runway expectations, daily MVP tasks, and dynamic motivation. Avoid long intros. Max 80 words spoken directly.`;
 
     try {
-      const res = await fetch("/api/ai-proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system: sys, messages: [{ role: "user", content: user }], max_tokens: 300 })
-      });
-      if (!res.ok) throw new Error();
-      const text = await res.json();
-      let cleanText = text?.delta?.text || "";
-      if (!cleanText) {
-        cleanText = `Founder, layout report on standard telemetry is complete. We need high velocity. Today's focus is direct customer outreach. Accelerate MVP execution before the cash runway contracts. Let's make it happen.`;
-      }
+      const cleanText = await ai(sys, user);
       setBriefingText(cleanText);
 
       setPlayingBriefing(true);
@@ -443,11 +425,17 @@ Keep it incredibly epic, stating current runway expectations, daily MVP tasks, a
       rec.interimResults = false;
       rec.lang = lang === "sw" ? "sw-KE" : "en-US";
 
+      let resultHandled = false;
+
       rec.onstart = () => {
         setCallStatus("listening");
+        resultHandled = false;
       };
 
       rec.onresult = async (event: any) => {
+        if (resultHandled) return;
+        resultHandled = true;
+        
         const transcriptText = event.results[0][0].transcript;
         if (!transcriptText || !transcriptText.trim()) return;
 
@@ -462,17 +450,18 @@ Keep it incredibly epic, stating current runway expectations, daily MVP tasks, a
         console.warn("SpeechRecognition error:", e);
         // If it was silent or timed out, and we are still active and listening, restart
         if (isCallActive && callStatus === "listening") {
-          setTimeout(() => {
-            if (isCallActive && callStatus === "listening") {
-              startListeningForUserSpeech();
-            }
-          }, 1200);
+            resultHandled = false; // Allow restart
+            setTimeout(() => {
+                if (isCallActive && callStatus === "listening") {
+                    startListeningForUserSpeech();
+                }
+            }, 1200);
         }
       };
 
       rec.onend = () => {
-        // Automatically restart speech recognition loop to allow fluid back-and-forth
-        if (isCallActive && callStatus === "listening") {
+        // Automatically restart speech recognition loop only if result was NOT handled
+        if (!resultHandled && isCallActive && callStatus === "listening") {
           setTimeout(() => {
             if (isCallActive && callStatus === "listening") {
               startListeningForUserSpeech();
@@ -1092,6 +1081,7 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
           { key: "discovery", label: t("discoveryTab"), icon: <Users size={14} /> },
           { key: "progress", label: t("progressTab"), icon: <Award size={14} /> },
           { key: "traction", label: t("tractionTab"), icon: <TrendingUp size={14} /> },
+          { key: "investor-sim", label: "Investor Sim", icon: <Sparkles size={14} /> },
         ].map(item => {
           const active = activeTab === item.key;
           return (
@@ -1227,9 +1217,15 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
                     style={{ flex: 1, padding: "0.5rem", background: "#050505", border: "1px solid #1a1a1a", borderRadius: "4px", color: "#ffffff", fontSize: "11px" }}
                   />
                   <button 
-                    onClick={() => {
+                    onClick={async () => {
                       if (!newMemory.trim()) return;
-                      setMemories(prev => [...prev, newMemory.trim()]);
+                      const memoryContent = newMemory.trim();
+                      const sb = getSupabase();
+                      if (sb) {
+                        const { error } = await sb.from('founder_memories').insert([{ content: memoryContent }]);
+                        if (error) { console.error('Error saving:', error); return; }
+                      }
+                      setMemories(prev => [...prev, memoryContent]);
                       setNewMemory("");
                     }}
                     style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "0.5rem 0.85rem", fontSize: "11px", cursor: "pointer", fontWeight: "bold" }}
@@ -1519,7 +1515,7 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
             <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-6">
               
               {/* Branded Room Preview */}
-              <div style={{ background: "#0a0a0a", border: "1px solid #1c1c1c", borderRadius: "6px", padding: '1.4rem' }}>
+              <div id="branded-room-preview" style={{ background: "#0a0a0a", border: "1px solid #1c1c1c", borderRadius: "6px", padding: '1.4rem' }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: '1px solid #1c1c1c', paddingBottom: "0.75rem", marginBottom: "1.1rem" }}>
                   <h3 style={{ color: LIME, fontSize: "12px", fontWeight: "bold", margin: 0 }}>🤝 {t("investorRoomTitle")}</h3>
                   <span style={{ color: CYAN, fontSize: "9px", fontWeight: "bold", letterSpacing: "1px" }}>🔒 SHA-256 ACCREDITED</span>
@@ -1564,7 +1560,7 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
                   </button>
 
                   <button 
-                    onClick={() => { alert("Branded print window triggered! Use PDF printer options securely."); window.print(); }}
+                    onClick={() => exportComponentToPDF("branded-room-preview", "Startup_Data_Room.pdf")}
                     style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", borderRadius: "4px", padding: "0.78rem 1.15rem", fontSize: "11px", cursor: "pointer" }}
                   >
                     PRINT / EXPORT PORTFOLIO PDF
@@ -1596,8 +1592,12 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
               </div>
 
             </div>
-
           </div>
+        )}
+
+        {/* TAB 3: INVESTOR SIMULATION */}
+        {activeTab === "investor-sim" && (
+            <InvestorSimulation />
         )}
 
         {/* TAB 3: FUNDRAISING OUTREACH & MATCHMAKER */}
