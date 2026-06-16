@@ -1479,8 +1479,15 @@ ${ctxStr(pairs)}`;
             } catch {}
           }
           // Only add if it's not already a duplicate or trivial
-          if (cleanMem && !currentMemories.includes(cleanMem)) {
+          const isDuplicate = currentMemories.some(
+            m => m.toLowerCase().replace(/[^a-z0-9]/g, "") === cleanMem.toLowerCase().replace(/[^a-z0-9]/g, "")
+          );
+          if (cleanMem && !isDuplicate) {
             currentMemories = [...currentMemories, cleanMem];
+            // Cap to the last 15 most recent/relevant memories
+            if (currentMemories.length > 15) {
+              currentMemories = currentMemories.slice(-15);
+            }
             localStorage.setItem("forge_cofounder_memories", JSON.stringify(currentMemories));
             console.log("Autonomous Living DNA memory recorded:", cleanMem);
           }
