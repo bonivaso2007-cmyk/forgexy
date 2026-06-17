@@ -22,7 +22,7 @@ export default function PitchDeck({ idea, profile, blueprintData, businessPlanDa
   const [slides, setSlides] = useState<Slide[]>([]);
   const [activeSlideIdx, setActiveSlideIdx] = useState(0);
   const [isPresenting, setIsPresenting] = useState(false);
-  const [deckTheme, setDeckTheme] = useState<"charcoal" | "solar" | "deepspace">("charcoal");
+  const [deckTheme, setDeckTheme] = useState<"charcoal" | "solar" | "deepspace" | "royal">("charcoal");
 
   // Dynamically assemble content based on current business data or defaults
   useEffect(() => {
@@ -196,6 +196,14 @@ export default function PitchDeck({ idea, profile, blueprintData, businessPlanDa
           textColor: "#faf9fc",
           mutedText: "rgba(250, 249, 252, 0.6)"
         };
+      case "royal":
+        return {
+          bg: "#080705",
+          border: "2px solid #D4AF37",
+          accentColor: "#D4AF37",
+          textColor: "#ffffff",
+          mutedText: "rgba(212, 175, 55, 0.6)"
+        };
       case "charcoal":
       default:
         return {
@@ -337,7 +345,7 @@ export default function PitchDeck({ idea, profile, blueprintData, businessPlanDa
         <div style={{ display: "flex", gap: "0.45rem", alignItems: "center" }}>
           {/* Deck Preset Themes */}
           <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase" }}>THEME:</span>
-          {["charcoal", "solar", "deepspace"].map(t => (
+          {["charcoal", "solar", "deepspace", "royal"].map(t => (
             <button 
               key={t}
               onClick={() => setDeckTheme(t as any)}

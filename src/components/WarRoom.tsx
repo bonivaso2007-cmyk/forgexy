@@ -235,6 +235,7 @@ export default function WarRoom({ idea, profile, swotData, onClose }: WarRoomPro
   };
 
   const LIME = "#c8ff00";
+  const GOLD = "#D4AF37";
   const PURPLE = "#b87fff";
   const PINK = "#ff3c78";
   const CYAN = "#00f0ff";
@@ -310,7 +311,7 @@ export default function WarRoom({ idea, profile, swotData, onClose }: WarRoomPro
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.2rem", paddingBottom: "0.8rem", borderBottom: "1px solid #1c1c1c" }}>
         <div>
           <span style={{ color: LIME, fontSize: "9px", letterSpacing: "3px", textTransform: "uppercase", fontWeight: "bold" }}>⚡️ COLLABORATIVE WAR ROOM</span>
-          <h2 style={{ color: "#fff", margin: "0.2rem 0 0", fontSize: "1.2rem", fontWeight: "bold" }}>Room ID: <span style={{ color: CYAN }}>{room}</span></h2>
+          <h2 style={{ color: GOLD, margin: "0.2rem 0 0", fontSize: "1.2rem", fontWeight: "bold" }}>Room ID: <span style={{ color: CYAN }}>{room}</span></h2>
         </div>
         <div style={{ display: "flex", gap: "0.55rem" }}>
           <button 
