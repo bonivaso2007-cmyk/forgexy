@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
+import { motion, AnimatePresence } from "motion/react";
 
 // Accent Colors congruent with App style rules
 const LIME = "#c8ff00";
@@ -294,6 +295,64 @@ FOUNDER DEFENSE SUBMISSION:
           <div style={{ color: PURPLE, fontSize: "1.4rem", fontWeight: "bold", marginTop: "2px", fontFamily: "monospace" }}>{streak} Days</div>
         </div>
 
+      </div>
+
+      {/* Chrono-Temporal Timeline Visualization */}
+      <div style={{ background: "#080808", border: "1px solid #1c1c1c", borderRadius: "8px", padding: "1.5rem", marginBottom: "1.5rem", position: "relative", overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+          <span style={{ color: LIME, fontSize: "10px", fontWeight: "900", letterSpacing: "2px", textTransform: "uppercase" }}>Chrono-Temporal Convergence Visualization</span>
+          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", fontFamily: "monospace" }}>STABILITY INDEX: {100 - divergence}%</span>
+        </div>
+
+        <div style={{ position: "relative", height: "60px", display: "flex", alignItems: "center" }}>
+          {/* Main Timeline Axis */}
+          <div style={{ position: "absolute", left: 0, right: 0, height: "1px", background: "rgba(255,255,255,0.1)" }} />
+
+          {/* Divergence Zones */}
+          <motion.div
+            animate={{ opacity: [0.05, 0.15, 0.05], scaleY: [1, 1.2, 1] }}
+            transition={{ duration: 4, repeat: Infinity }}
+            style={{ position: "absolute", left: "20%", right: "20%", height: "40px", background: `radial-gradient(ellipse, ${CYAN}33 0%, transparent 70%)`, borderRadius: "50%" }}
+          />
+
+          {/* Current Timeline Marker */}
+          <motion.div
+            style={{
+              position: "absolute",
+              left: `${50 + (divergence * 0.5)}%`,
+              width: "2px",
+              height: "30px",
+              background: LIME,
+              boxShadow: `0 0 10px ${LIME}`
+            }}
+            animate={{ height: [30, 40, 30] }}
+            transition={{ duration: 2, repeat: Infinity }}
+          >
+            <div style={{ position: "absolute", top: "-20px", left: "50%", transform: "translateX(-50%)", color: LIME, fontSize: "8px", fontWeight: "bold", whiteSpace: "nowrap" }}>PRESENT</div>
+          </motion.div>
+
+          {/* Future Marker (2100) */}
+          <div style={{ position: "absolute", right: "5%", width: "10px", height: "10px", borderRadius: "50%", border: `1px solid ${PURPLE}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: "4px", height: "4px", borderRadius: "50%", background: PURPLE }} className="animate-pulse" />
+            <div style={{ position: "absolute", top: "15px", color: PURPLE, fontSize: "8px", fontWeight: "bold" }}>2100</div>
+          </div>
+
+          {/* Past Marker */}
+          <div style={{ position: "absolute", left: "5%", width: "1px", height: "10px", background: "rgba(255,255,255,0.3)" }}>
+            <div style={{ position: "absolute", top: "15px", left: "50%", transform: "translateX(-50%)", color: "rgba(255,255,255,0.3)", fontSize: "8px" }}>2024</div>
+          </div>
+
+          {/* Animated Particles */}
+          {Array.from({ length: 10 }).map((_, i) => (
+            <motion.div
+              key={i}
+              initial={{ x: Math.random() * 100 + "%", y: (Math.random() - 0.5) * 40, opacity: 0 }}
+              animate={{ x: ["0%", "100%"], opacity: [0, 1, 0] }}
+              transition={{ duration: Math.random() * 5 + 5, repeat: Infinity, ease: "linear", delay: Math.random() * 5 }}
+              style={{ position: "absolute", width: "1px", height: "1px", background: CYAN, borderRadius: "50%" }}
+            />
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5">

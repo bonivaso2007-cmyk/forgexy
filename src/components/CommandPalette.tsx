@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Command, BrainCircuit, Rocket, LayoutDashboard, FileText, Zap } from "lucide-react";
+import { Command, BrainCircuit, Rocket, LayoutDashboard, FileText, Zap, Globe, TrendingUp, ShieldCheck } from "lucide-react";
 
 export default function CommandPalette({ isOpen, onClose, navigateTo }) {
   if (!isOpen) return null;
@@ -13,9 +13,12 @@ export default function CommandPalette({ isOpen, onClose, navigateTo }) {
           placeholder="Search tools (e.g. War Room, Pitch Deck)..." 
         />
         <div className="py-2">
-            <button onClick={() => { navigateTo("co-pilot"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><LayoutDashboard size={16}/> Dashboard</button>
+            <button onClick={() => { navigateTo("co-pilot"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><LayoutDashboard size={16}/> Dashboard / Co-Pilot</button>
             <button onClick={() => { navigateTo("war-room"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><BrainCircuit size={16}/> War Room</button>
             <button onClick={() => { navigateTo("pitch-deck"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><Rocket size={16}/> Pitch Deck</button>
+            <button onClick={() => { navigateTo("landscape"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><Globe size={16}/> Market Landscape</button>
+            <button onClick={() => { navigateTo("runway"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><TrendingUp size={16}/> Runway Sandbox</button>
+            <button onClick={() => { navigateTo("sentinel"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><ShieldCheck size={16}/> Venture Sentinel</button>
             <button onClick={() => { navigateTo("investor-sim"); onClose(); }} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-zinc-300 text-sm rounded-lg"><Zap size={16}/> Investor Simulation</button>
             <button onClick={onClose} className="w-full flex items-center gap-2 text-left p-3 hover:bg-zinc-800/50 text-red-400 text-sm rounded-lg">Close</button>
         </div>

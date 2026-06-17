@@ -5,8 +5,12 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { WebSocketServer, WebSocket } from "ws";
 import fs from "fs";
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Ensure the Gemini API Key is available
 const apiKey = process.env.GEMINI_API_KEY;

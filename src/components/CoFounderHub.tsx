@@ -4,6 +4,7 @@ import { Brain, ShieldCheck, Mail, Users, Award, Globe,
   Volume2, Sparkles, AlertCircle, FileText, CheckCircle2,
   Phone, PhoneOff, Mic, MicOff
 } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import { exportComponentToPDF } from "../lib/pdfExporter";
 import { getSupabase } from "../lib/supabase";
 import InvestorSimulation from "./InvestorSimulation";
@@ -12,6 +13,7 @@ import { aiStream, ai } from "../lib/ai";
 
 // Conforming to Forge aesthetic styling
 const LIME = "#C8FF00";
+const GOLD = "#D4AF37";
 const PINK = "#FF3C78";
 const PURPLE = "#B87FFF";
 const CYAN = "#00FFFF";
@@ -991,7 +993,7 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
             <span style={{ fontSize: "1.85rem", animation: "pulse 2s infinite" }}>🛰️</span>
             <div>
               <h1 style={{ color: LIME, fontSize: "1.55rem", fontWeight: "900", textTransform: "uppercase", margin: 0, letterSpacing: "1px" }}>{t("title")}</h1>
-              <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.72rem", margin: "2px 0 0" }}>{t("subtitle")}</p>
+              <p style={{ color: GOLD, fontSize: "0.72rem", margin: "2px 0 0" }}>{t("subtitle")}</p>
             </div>
           </div>
         </div>
@@ -1304,18 +1306,43 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
                   {isCallActive ? (
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem" }}>
                       
-                      {/* Animated Core Vocal Orb */}
-                      <div style={{ position: "relative", width: "100px", height: "100px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {/* Animated Core Vocal Orb & Waveform */}
+                      <div style={{ position: "relative", width: "160px", height: "100px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {/* Waveform Visualization */}
+                        <div style={{ position: "absolute", display: "flex", gap: "3px", alignItems: "center", height: "40px" }}>
+                          {Array.from({ length: 15 }).map((_, i) => (
+                            <motion.div
+                              key={i}
+                              animate={{
+                                height: (callStatus === "speaking" || callStatus === "listening")
+                                  ? [10, Math.random() * 40 + 10, 10]
+                                  : 4
+                              }}
+                              transition={{
+                                duration: 0.5,
+                                repeat: Infinity,
+                                delay: i * 0.05
+                              }}
+                              style={{
+                                width: "3px",
+                                background: callStatus === "speaking" ? LIME : CYAN,
+                                borderRadius: "2px",
+                                opacity: (callStatus === "speaking" || callStatus === "listening") ? 0.6 : 0.2
+                              }}
+                            />
+                          ))}
+                        </div>
+
                         {/* Pulse Ring 1 */}
-                        <div 
-                          className="animate-ping"
+                        <motion.div
+                          animate={{ scale: [1, 1.2, 1], opacity: [0.2, 0.4, 0.2] }}
+                          transition={{ duration: 2, repeat: Infinity }}
                           style={{ 
                             position: "absolute", 
                             width: "100px", 
                             height: "100px", 
                             borderRadius: "50%", 
                             background: callStatus === "speaking" ? "rgba(200, 255, 0, 0.15)" : callStatus === "listening" ? "rgba(0, 255, 255, 0.15)" : "rgba(255, 60, 120, 0.15)",
-                            animationDuration: "2s"
                           }} 
                         />
                         {/* Main Center Ball */}
@@ -1329,7 +1356,8 @@ Analyze this traction profile. Identify if there's high churn or lower-than-proj
                             alignItems: "center", 
                             justifyContent: "center", 
                             boxShadow: `0 0 25px ${callStatus === "speaking" ? LIME : callStatus === "listening" ? CYAN : PINK}`,
-                            transition: "all 0.3s ease"
+                            transition: "all 0.3s ease",
+                            zIndex: 1
                           }}
                         >
                           <Phone size={24} color="#000" />
