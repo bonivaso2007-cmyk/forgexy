@@ -51,13 +51,7 @@ async function startServer() {
     }
     try {
       if (!apiKey) {
-        return res.json({
-          center: { lat: 37.7749, lng: -122.4194 },
-          results: [
-            { id: "c1", name: "Alpha Competitor Space", lat: 37.7781, lng: -122.4121, description: "Direct local incumbent.", vulnerability: "Weak digital portal", traffic: "High" },
-            { id: "c2", name: "Nexus Solutions", lat: 37.7699, lng: -122.4223, description: "Traditional provider in neighborhood.", vulnerability: "Premium prices", traffic: "Medium" }
-          ]
-        });
+        return res.status(500).json({ error: "AI provider not configured. Contact support." });
       }
 
       const sys = `Generate accurate or highly relevant competitor map data for a startup pitch mapping competitors in ${city} for the niche: "${niche}". Return ONLY a valid JSON object matching this schema:
@@ -262,19 +256,70 @@ async function startServer() {
     }
   });
 
-  // Serve static assets and bundle depending on environment
-  const distPath = path.join(process.cwd(), "dist");
-  const hasDist = fs.existsSync(path.join(distPath, "index.html"));
+  // Resolve dist path robustly across local dev AND bundled production execution
+  let distPath = path.join(process.cwd(), "dist");
+  let hasDist = fs.existsSync(path.join(distPath, "index.html"));
+
+  if (!hasDist) {
+    // If running from dist/ server (e.g. dist/server.cjs) or different working directory
+    const altPath1 = __dirname;
+    const altPath2 = path.join(__dirname, "..");
+    const altPath3 = path.join(__dirname, "../dist");
+    if (fs.existsSync(path.join(altPath1, "index.html"))) {
+      distPath = altPath1;
+      hasDist = true;
+    } else if (fs.existsSync(path.join(altPath2, "index.html"))) {
+      distPath = altPath2;
+      hasDist = true;
+    } else if (fs.existsSync(path.join(altPath3, "index.html"))) {
+      distPath = altPath3;
+      hasDist = true;
+    }
+  }
 
   if (process.env.NODE_ENV !== "production" || !hasDist) {
-    if (!hasDist && process.env.NODE_ENV === "production") {
-      console.warn("WARNING: Serve environment is production, but 'dist/index.html' is absent. Falling back to on-demand build layer (Vite Dev Server) to secure operation.");
+    if (process.env.NODE_ENV === "production" && !hasDist) {
+      console.error("CRITICAL ERROR: 'dist/index.html' not found in any resolved paths!");
+      app.get("/", (req, res) => {
+        res.setHeader("Content-Type", "text/html");
+        res.status(500).send(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>FORGE Deployment Assistant</title>
+              <style>
+                body { background: #050505; color: #fff; font-family: monospace; padding: 3rem; line-height: 1.6; }
+                .card { border: 1px solid #1a1a1a; padding: 2rem; border-radius: 8px; max-width: 600px; margin: 0 auto; background: #0a0a0a; }
+                h1 { color: #c8ff00; margin-top: 0; }
+                code { background: #151515; padding: 0.2rem 0.4rem; border-radius: 4px; color: #ff3c78; }
+                pre { background: #151515; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; border: 1px solid #222; }
+                .success { color: #c8ff00; }
+                .hint { border-left: 3px solid #D4AF37; padding-left: 1rem; margin: 1.5rem 0; color: #ccc; }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h1>🛑 FORGE Deploy Diagnostics</h1>
+                <p>The server is running dynamically, but static assets could not be located at any of these target locations:</p>
+                <pre>Target path: ${distPath}</pre>
+                <div class="hint">
+                  <strong>How to fix on Render:</strong><br/>
+                  Go to your Render Dashboard settings and update your <strong>Build Command</strong> to:<br/>
+                  <code>npm run build</code>
+                </div>
+                <p>This will guarantee that our builder transpiles the App into <code>dist/</code> and compiles the server into <code>dist/server.cjs</code> prior to launching <code>npm start</code>.</p>
+              </div>
+            </body>
+          </html>
+        `);
+      });
+    } else {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
     }
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
   } else {
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
