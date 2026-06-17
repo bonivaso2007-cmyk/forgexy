@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { WebSocketServer, WebSocket } from "ws";
+import fs from "fs";
 
 dotenv.config();
 
@@ -262,14 +263,19 @@ async function startServer() {
   });
 
   // Serve static assets and bundle depending on environment
-  if (process.env.NODE_ENV !== "production") {
+  const distPath = path.join(process.cwd(), "dist");
+  const hasDist = fs.existsSync(path.join(distPath, "index.html"));
+
+  if (process.env.NODE_ENV !== "production" || !hasDist) {
+    if (!hasDist && process.env.NODE_ENV === "production") {
+      console.warn("WARNING: Serve environment is production, but 'dist/index.html' is absent. Falling back to on-demand build layer (Vite Dev Server) to secure operation.");
+    }
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

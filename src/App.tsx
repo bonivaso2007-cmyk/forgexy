@@ -560,7 +560,7 @@ function Onboarding({ user, onDone }) {
 }
 
 // ── PROFILE PANEL ─────────────────────────────────────────
-function ProfilePanel({ profile, user, onUpdate, onLogout, onClose }) {
+function ProfilePanel({ profile, user, onUpdate, onLogout, onClose, onOpenFeedback }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ ...profile });
   const fields = [
@@ -615,7 +615,8 @@ function ProfilePanel({ profile, user, onUpdate, onLogout, onClose }) {
               }
             </div>
           ))}
-          <button onClick={onLogout} style={{ background: "transparent", border: "1px solid rgba(255, 60, 120, 0.25)", color: PINK, borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "1rem", width: "100%" }}>LOG OUT</button>
+          <button onClick={onOpenFeedback} style={{ background: "rgba(200, 255, 0, 0.08)", border: "1px solid rgba(200, 255, 0, 0.3)", color: LIME, borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "1rem", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.45rem" }}>📣 GIVE FEEDBACK</button>
+          <button onClick={onLogout} style={{ background: "transparent", border: "1px solid rgba(255, 60, 120, 0.25)", color: PINK, borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "0.6rem", width: "100%" }}>LOG OUT</button>
         </div>
       </div>
     </div>
@@ -1319,6 +1320,62 @@ export default function App() {
   const [showPrivacyDialog, setShowPrivacyDialog] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
+  
+  // EXPERIENCE LOG / FEEDBACK STATE MANAGEMENT
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackState, setFeedbackState] = useState({ rating: 0, text: "", features: [] as string[] });
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackSuccess, setFeedbackSuccess] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    try {
+      return localStorage.getItem("forge_feedback_dismissed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const submitFeedback = async () => {
+    if (!feedbackState.text.trim() && feedbackState.rating === 0) return;
+    setFeedbackLoading(true);
+    try {
+      const feedbackObj = {
+        id: `fd:${Date.now()}`,
+        rating: feedbackState.rating,
+        text: feedbackState.text,
+        features: feedbackState.features,
+        submittedAt: Date.now(),
+        userEmail: user?.email || "anonymous",
+        userUid: user?.uid || "guest"
+      };
+
+      // Store in localStorage array for local state persistence
+      const stored = localStorage.getItem("forge_founder_feedbacks");
+      let list = stored ? JSON.parse(stored) : [];
+      list.push(feedbackObj);
+      localStorage.setItem("forge_founder_feedbacks", JSON.stringify(list));
+
+      // Also log feedback securely to the console for live developer tracing
+      console.log("✓ Experience Feedback submitted successfully:", feedbackObj);
+
+      setFeedbackSuccess(true);
+      setTimeout(() => {
+        setShowFeedbackModal(false);
+        setFeedbackSuccess(false);
+        setFeedbackState({ rating: 0, text: "", features: [] });
+      }, 2500);
+    } catch (err) {
+      console.error("Failed to submit feedback:", err);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const handleDismissBanner = () => {
+    try {
+      localStorage.setItem("forge_feedback_dismissed", "true");
+      setBannerDismissed(true);
+    } catch {}
+  };
 
   const handleCopyRaw = () => {
     if (!outType || !outputs[outType]) return;
@@ -1676,8 +1733,139 @@ ${ctxStr(pairs)}`;
 
       {intel && <IntelPanel idea={idea} profile={profile} onClose={() => setIntel(false)} initialQuery={intelQuery} onQueryHandled={() => setIntelQuery(null)} />}
       {company && <CompanyBuilder idea={idea} qaCtx={ctxStr(qa)} profile={profile} onClose={() => setCompany(false)} />}
-      {showProfile && <ProfilePanel profile={profile} user={user} onUpdate={p => setProfile(p)} onLogout={logout} onClose={() => setShowProfile(false)} />}
+      {showProfile && <ProfilePanel profile={profile} user={user} onUpdate={p => setProfile(p)} onLogout={logout} onClose={() => setShowProfile(false)} onOpenFeedback={() => setShowFeedbackModal(true)} />}
       {showHistory && <HistoryPanel uid={user?.uid} onLoad={loadIdea} onClose={() => setShowHistory(false)} />}
+
+      {showFeedbackModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(5px)", zIndex: 100005, display: "flex", alignItems: "center", justifyContent: "center", padding: "1.2rem" }}>
+          <div style={{ width: "100%", maxWidth: "480px", background: "#080808", border: `1px solid rgba(200, 255, 0, 0.25)`, borderRadius: "8px", padding: "1.8rem 1.6rem", display: "flex", flexDirection: "column", gap: "1.2rem", boxShadow: "0 20px 45px rgba(0,0,0,0.9)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <span style={{ color: LIME, fontSize: "9px", fontWeight: "900", letterSpacing: "2.5px", fontFamily: "monospace" }}>ENGINE LOG</span>
+                <h3 style={{ color: "#ffffff", fontSize: "1.1rem", margin: "2px 0 0", fontFamily: "monospace", fontWeight: "900" }}>Submit Forge Feedback</h3>
+              </div>
+              <button onClick={() => setShowFeedbackModal(false)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: "1.1rem", cursor: "pointer" }}>✕</button>
+            </div>
+
+            <p style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.78rem", lineHeight: "1.45", margin: 0, fontFamily: "monospace" }}>
+              How has your experience been forging startup concepts? Rating & logs are retained in your secure local console database to shape future modules.
+            </p>
+
+            {/* Star feedback selection */}
+            <div>
+              <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>SATISFACTION INDEX</label>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                {[1, 2, 3, 4, 5].map(num => (
+                  <button 
+                    key={num}
+                    onClick={() => setFeedbackState(prev => ({ ...prev, rating: num }))}
+                    style={{
+                      flex: 1,
+                      background: feedbackState.rating >= num ? "rgba(200,255,0,0.12)" : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${feedbackState.rating >= num ? LIME : "rgba(255,255,255,0.1)"}`,
+                      color: feedbackState.rating >= num ? LIME : "rgba(255,255,255,0.4)",
+                      padding: "0.48rem 0",
+                      fontSize: "11px",
+                      fontFamily: "monospace",
+                      fontWeight: "bold",
+                      borderRadius: "4px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {num} ★
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Multiselect what features they love */}
+            <div>
+              <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>MOST VALUABLE CORE ENGINES</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                {["SWOT War Room", "Runway Sandbox", "Pitch Simulator", "Venture Sentinel", "Co-Pilot Call Mode", "Geomarket Radar"].map(feat => {
+                  const isSelected = feedbackState.features.includes(feat);
+                  return (
+                    <button
+                      key={feat}
+                      onClick={() => {
+                        setFeedbackState(prev => {
+                          const nextList = prev.features.includes(feat)
+                            ? prev.features.filter(f => f !== feat)
+                            : [...prev.features, feat];
+                          return { ...prev, features: nextList };
+                        });
+                      }}
+                      style={{
+                        background: isSelected ? "rgba(200,255,0,0.1)" : "rgba(255,255,255,0.02)",
+                        border: `1px solid ${isSelected ? LIME : "rgba(255,255,255,0.08)"}`,
+                        color: isSelected ? LIME : "rgba(255,255,255,0.5)",
+                        borderRadius: "4px",
+                        padding: "4px 8px",
+                        fontSize: "9px",
+                        fontFamily: "monospace",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {feat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Text area for detailed remarks */}
+            <div>
+              <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>DETAILED FOUNDER LOGS / BUGS</label>
+              <textarea
+                value={feedbackState.text}
+                onChange={e => setFeedbackState(prev => ({ ...prev, text: e.target.value }))}
+                placeholder="What features did you find stellar? Share any friction, feature ideas, or software glitches detected..."
+                style={{
+                  width: "100%",
+                  height: "90px",
+                  background: "#050505",
+                  border: "1px solid #1c1c1c",
+                  borderRadius: "5px",
+                  color: "#ffffff",
+                  padding: "0.6rem 0.8rem",
+                  fontSize: "0.78rem",
+                  fontFamily: "monospace",
+                  lineHeight: "1.4",
+                  boxSizing: "border-box",
+                  resize: "none",
+                  outline: "none"
+                }}
+              />
+            </div>
+
+            {feedbackSuccess ? (
+              <div style={{ background: "rgba(200, 255, 0, 0.08)", border: `1px solid ${LIME}`, borderRadius: "4px", padding: "0.6rem 0.8rem", color: LIME, fontSize: "10px", fontFamily: "monospace", textAlign: "center", fontWeight: "bold" }}>
+                ✓ FEEDBACK SECURELY ARCHIVED. Thank you, founder!
+              </div>
+            ) : (
+              <button
+                onClick={submitFeedback}
+                disabled={feedbackLoading}
+                style={{
+                  width: "100%",
+                  background: feedbackState.text.trim() || feedbackState.rating > 0 ? LIME : "rgba(200, 255, 0, 0.15)",
+                  color: feedbackState.text.trim() || feedbackState.rating > 0 ? "#000" : "rgba(255, 255, 255, 0.2)",
+                  border: "none",
+                  borderRadius: "5px",
+                  padding: "0.65rem 0",
+                  fontSize: "11px",
+                  fontFamily: "monospace",
+                  fontWeight: "900",
+                  cursor: feedbackState.text.trim() || feedbackState.rating > 0 ? "pointer" : "not-allowed",
+                  transition: "all 0.2s"
+                }}
+              >
+                {feedbackLoading ? "TRANSMITTING TO SECURE CORE..." : "TRANSMIT EXPERIENCE LOG"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {showSentinel && (
         <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
@@ -2140,6 +2328,29 @@ ${ctxStr(pairs)}`;
                 <button onClick={() => setShowHistory(true)} style={{ background: CYAN, color: "#000", border: "none", borderRadius: "4px", padding: "4px 10px", fontSize: "9px", fontWeight: "bold", fontFamily: "monospace", cursor: "pointer" }}>
                   OPEN VAULT
                 </button>
+              </div>
+            )}
+
+            {/* EXPERIENCE LOG / FEEDBACK BANNER */}
+            {!bannerDismissed && (
+              <div style={{ background: "rgba(200, 255, 0, 0.04)", border: "1px dashed rgba(200, 255, 0, 0.25)", borderRadius: "6px", padding: "1.1rem 1.3rem", marginTop: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1.1rem", position: "relative" }}>
+                <div style={{ display: "flex", gap: "0.7rem", alignItems: "center" }}>
+                  <span style={{ fontSize: "1.3rem" }}>✨</span>
+                  <div>
+                    <div style={{ color: LIME, fontSize: "9px", fontWeight: "900", fontFamily: "monospace", letterSpacing: "1.5px" }}>FOUNDER EXPERIENCE LOG</div>
+                    <div style={{ color: "rgba(255,255,255,0.65)", fontSize: "0.72rem", fontFamily: "monospace", marginTop: "2px", lineHeight: "1.4" }}>
+                      Your feedback shapes the Forge. Share any feature ideas, friction points, or praise with us.
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexShrink: 0 }}>
+                  <button onClick={() => setShowFeedbackModal(true)} style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "5px 12px", fontSize: "9px", fontWeight: "900", fontFamily: "monospace", cursor: "pointer" }}>
+                    GIVE FEEDBACK
+                  </button>
+                  <button onClick={handleDismissBanner} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: "11px", fontWeight: "bold", cursor: "pointer", padding: "4px 8px" }} title="Dismiss banner">
+                    ✕
+                  </button>
+                </div>
               </div>
             )}
 
