@@ -4,6 +4,7 @@ import PitchDeck from "./components/PitchDeck";
 import CommandPalette from "./components/CommandPalette";
 import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
 import { supabase, reinitializeSupabase } from "./lib/supabase";
+import { Vault, User } from "lucide-react";
 
 const API = "/api/ai-proxy";
 const Q_TARGET = 6;
@@ -2130,46 +2131,60 @@ ${ctxStr(pairs)}`;
   const scoreColor = s => s >= 80 ? LIME : s >= 60 ? CYAN : PINK;
 
   const G = {
-    app: { minHeight: "100vh", background: "#0F0D0B", color: "#F4EFE3", fontFamily: '"Inter", sans-serif', display: "flex" as const, flexDirection: "column" as const, alignItems: "center", padding: "0 1.25rem" },
-    wrap: { width: "100%", maxWidth: "820px", transition: "padding-right .3s" },
-    label: { color: PURPLE, fontSize: "10px", textTransform: "uppercase" as const, letterSpacing: "3px", marginBottom: "0.65rem", fontWeight: "bold" as const },
-    ta: { width: "100%", background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", color: "#F4EFE3", fontSize: "0.96rem", padding: "1.1rem", resize: "none" as const, outline: "none", fontFamily: '"Inter", sans-serif', lineHeight: "1.72", boxSizing: "border-box" as const },
-    btn: { background: LIME, color: "#0F0D0B", border: "none", borderRadius: "6px", padding: "0.82rem 1.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: "pointer", fontFamily: '"Inter", sans-serif', textTransform: "uppercase" as const },
-    ghost: { background: "transparent", color: "#B8AFA0", border: "1px solid #2E2A24", borderRadius: "6px", padding: "0.55rem 1rem", fontSize: "11px", cursor: "pointer", fontFamily: '"IBM Plex Mono", monospace', transition: "all .15s" },
-    err: { color: "#F4EFE3", fontSize: "0.72rem", marginTop: "0.75rem", background: "rgba(92, 32, 38, 0.12)", border: "1px solid #5C2026", borderRadius: "6px", padding: "0.55rem 0.85rem" },
+    app: { minHeight: "100vh", background: "var(--bg-base)", color: "var(--text-base)", fontFamily: "var(--font-sans)", display: "flex", flexDirection: "column", alignItems: "center", padding: "0 1.25rem" },
+    wrap: { width: "100%", maxWidth: "600px", transition: "padding-right .3s" },
+    label: { color: "var(--text-muted)", fontSize: "10px", textTransform: "uppercase", letterSpacing: "3px", marginBottom: "0.65rem", fontWeight: "bold" },
+    ta: { width: "100%", background: "var(--bg-panel)", border: "1px solid var(--border-panel)", borderRadius: "6px", color: "var(--text-base)", fontSize: "1.1rem", padding: "1.2rem", resize: "none", outline: "none", fontFamily: "var(--font-sans)", lineHeight: "1.72", boxSizing: "border-box" },
+    btn: { background: "var(--accent-lime)", color: "var(--bg-base)", border: "none", borderRadius: "6px", padding: "1rem 2rem", fontSize: "12px", fontWeight: "900", letterSpacing: "2.5px", cursor: "pointer", fontFamily: "var(--font-sans)", textTransform: "uppercase" },
+    err: { color: "var(--text-base)", fontSize: "0.72rem", marginTop: "0.75rem", background: "rgba(255,0,0,0.1)", border: "1px solid rgba(255,0,0,0.3)", borderRadius: "6px", padding: "0.55rem 0.85rem" },
   };
 
   return (
     <div style={{ ...G.app, position: "relative", overflowX: "hidden" }}>
-      {/* Google-Gemini style flowing background ambient mesh orbs */}
-      <div style={{ position: "fixed", top: "-15%", right: "-15%", width: "70vw", height: "70vh", background: "radial-gradient(circle, rgba(200, 162, 78, 0.05) 0%, rgba(0,0,0,0) 70%)", filter: "blur(90px)", zIndex: 0, pointerEvents: "none", animation: "orbFlow 20s infinite ease-in-out" }} />
-      <div style={{ position: "fixed", bottom: "-10%", left: "-20%", width: "80vw", height: "80vh", background: "radial-gradient(circle, rgba(22, 60, 46, 0.04) 0%, rgba(0,0,0,0) 75%)", filter: "blur(110px)", zIndex: 0, pointerEvents: "none", animation: "orbFlowReverse 25s infinite ease-in-out" }} />
+      {/* MINIMALIST HEADER */}
+      <div style={{ display: "flex", width: "100%", maxWidth: "600px", justifyContent: "space-between", alignItems: "center", padding: "1.5rem 0" }}>
+        <img src={forgeLogo} alt="FORGE" style={{ width: "32px", height: "32px", borderRadius: "50%" }} />
+        <div style={{ display: "flex", gap: "1rem", color: "var(--text-muted)" }}>
+          <Vault size={20} className="cursor-pointer hover:text-[var(--accent-lime)]" onClick={() => setShowHistory(true)} />
+          <User size={20} className="cursor-pointer hover:text-[var(--accent-lime)]" onClick={() => setShowProfile(true)} />
+        </div>
+      </div>
 
-      <style>{`
-        @keyframes pulse{0%,100%{opacity:.1}50%{opacity:1}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes glowPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 12px 2px rgba(200, 162, 78, 0.04)}}
-        @keyframes orbFlow{0%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,-30px) scale(1.15)}100%{transform:translate(0,0) scale(1)}}
-        @keyframes orbFlowReverse{0%{transform:translate(0,0) scale(1)}50%{transform:translate(-30px,40px) scale(1.1)}100%{transform:translate(0,0) scale(1)}}
-        textarea:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 162, 78, 0.25)!important;}
-        input:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 162, 78, 0.25)!important;}
-        .p-btn:hover{background:rgba(255,255,255,0.06)!important;color:#ffffff!important;}
-        .outcard{
-          background: rgba(12, 12, 12, 0.65)!important;
-          backdrop-filter: blur(20px)!important;
-          -webkit-backdrop-filter: blur(20px)!important;
-          border: 1px solid rgba(255,255,255,0.08)!important;
-          transition: all .25s cubic-bezier(0.4, 0, 0.2, 1)!important;
-        }
-        .outcard:hover{
-          border-color:${LIME}!important;
-          transform:translateY(-4px)!important;
-          background: rgba(22, 22, 22, 0.85)!important;
-          box-shadow: 0 12px 28px rgba(200,255,0,0.07), inset 0 0 12px rgba(255,255,255,0.02)!important;
-        }
-        .gh:hover{color:${LIME}!important;border-color:${LIME}!important;background:rgba(200,255,0,0.03)!important;}
-      `}</style>
+      <div style={G.wrap}>
+        {/* MAIN IGNITION VIEW */}
+        {phase === "ignition" && (
+          <div style={{ marginTop: "4rem" }}>
+            <h1 style={{ fontSize: "2.5rem", fontWeight: "700", marginBottom: "2rem", color: "var(--text-base)" }}>What are you building?</h1>
+            <textarea 
+              style={{ ...G.ta, height: "150px", marginBottom: "1rem" }}
+              placeholder="Describe your startup idea..."
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+            />
+            <button style={{ ...G.btn, width: "100%" }} onClick={ignite} disabled={loading}>
+              {loading ? "IGNITING..." : "IGNITE"}
+            </button>
+          </div>
+        )}
+        
+        {/* Progressive reveal: Expandable module cards after ignite */}
+        {phase !== "ignition" && (
+           <div style={{ marginTop: "2rem", display: "grid", gridTemplateColumns: "1fr", gap: "1rem" }}>
+             {[
+               { label: "Stress Test", click: () => setPhase("reality-check") },
+               { label: "Market Intel", click: () => setIntel(true) },
+               { label: "Founder Profile", click: () => setShowProfile(true) },
+               { label: "Company Builder", click: () => setCompany(true) },
+               { label: "Vault", click: () => setShowHistory(true) }
+             ].map(mod => (
+               <div key={mod.label} onClick={mod.click} style={{ padding: "1.5rem", border: "1px solid var(--border-panel)", borderRadius: "8px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                 <span style={{ fontSize: "1.1rem", fontWeight: "500", color: "var(--text-base)" }}>{mod.label}</span>
+                 <span style={{ color: "var(--text-muted)" }}>→</span>
+               </div>
+             ))}
+           </div>
+        )}
+      </div>
 
       {intel && <IntelPanel idea={idea} profile={profile} onClose={() => setIntel(false)} initialQuery={intelQuery} onQueryHandled={() => setIntelQuery(null)} />}
       {company && <CompanyBuilder idea={idea} qaCtx={ctxStr(qa)} profile={profile} onClose={() => setCompany(false)} />}
