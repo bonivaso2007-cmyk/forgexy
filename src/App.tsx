@@ -7,12 +7,19 @@ import { supabase } from "./lib/supabase";
 
 const API = "/api/ai-proxy";
 const Q_TARGET = 6;
-const LIME = "#C8A24E"; // Sovereign Gilt
-const PURPLE = "#B8AFA0"; // Secondary Muted Sand/Silt
-const ORANGE = "#163C2E"; // Deep Emerald Green
-const PINK = "#5C2026"; // Crimson Oxblood
-const CYAN = "#D4AF37"; // Bright Accent Gold
+const GOLD = "#C8A24E"; // Sovereign Gilt
+const SAND = "#B8AFA0"; // Secondary Muted Sand/Silt
+const EMERALD = "#163C2E"; // Deep Emerald Green
+const OXBLOOD = "#5C2026"; // Crimson Oxblood
+const GOLD_BRIGHT = "#D4AF37"; // Bright Accent Gold
 const BRANCH_COLORS = ["#C8A24E", "#B8AFA0", "#D4AF37", "#9BA88F", "#E5DCC6"];
+
+// Legacy stylistic aliases for backward-compatible rendering safety across deep sub-systems:
+const LIME = GOLD;
+const PURPLE = SAND;
+const ORANGE = EMERALD;
+const PINK = OXBLOOD;
+const CYAN = GOLD_BRIGHT;
 
 // ── SECURE CRYPTO VAULT ENGINE ────────────────────────────
 // Uses PBKDF2 + AES-GCM (all native Web Crypto) for zero-trust client-side vault encryption.
@@ -25,6 +32,48 @@ async function hashPasswordSHA256(password: string): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function hashPasswordPBKDF2(password: string, saltHex: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const salt = new Uint8Array(saltHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+  
+  const baseKey = await window.crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+  
+  const derivedBits = await window.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    baseKey,
+    256
+  );
+  
+  return Array.from(new Uint8Array(derivedBits))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getOrCreateGuestUid() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return "guest_user";
+  }
+  let uid = localStorage.getItem("forge_guest_uid");
+  if (!uid) {
+    const randomBits = window.crypto.getRandomValues(new Uint8Array(8));
+    const randomHex = Array.from(randomBits).map(b => b.toString(16).padStart(2, "0")).join("");
+    uid = `guest_${Date.now()}_${randomHex}`;
+    localStorage.setItem("forge_guest_uid", uid);
+  }
+  return uid;
 }
 
 async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
@@ -168,43 +217,62 @@ const store = {
     try {
       let rawVal: any = null;
 
-      // Attempt loading from Supabase if active and key is a vault idea
-      if (supabase && k.startsWith("idea:")) {
-        try {
-          const parts = k.split(":");
-          const ideaId = parts[2];
-          const { data, error } = await supabase.from('vault_ideas').select('*').eq('id', ideaId).maybeSingle();
-          if (!error && data) {
-            rawVal = {
-              id: data.id,
-              text: data.text,
-              score: data.score,
-              label: data.label,
-              qa: typeof data.qa === 'string' ? JSON.parse(data.qa) : data.qa,
-              savedAt: Number(data.savedAt)
-            };
-          } else {
-            // Backup fallback to key-value table
+      // 1. Try local storage first
+      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.get) {
+        const r = await (window as any).storage.get(k);
+        rawVal = r ? JSON.parse(r.value) : null;
+      } else if (typeof window !== "undefined" && window.localStorage) {
+        const item = localStorage.getItem(k);
+        rawVal = item ? JSON.parse(item) : null;
+      }
+
+      // 2. If not found locally, try Supabase fallback
+      if (!rawVal && supabase) {
+        if (k.startsWith("idea:")) {
+          try {
+            const parts = k.split(":");
+            const ideaId = parts[2];
+            const { data, error } = await supabase.from('vault_ideas').select('*').eq('id', ideaId).maybeSingle();
+            if (!error && data) {
+              if (data.text && data.text.startsWith("SECURE:")) {
+                rawVal = data.text;
+              } else {
+                rawVal = {
+                  id: data.id,
+                  text: data.text,
+                  score: data.score,
+                  label: data.label,
+                  qa: typeof data.qa === 'string' ? JSON.parse(data.qa) : data.qa,
+                  savedAt: Number(data.savedAt)
+                };
+              }
+            } else {
+              // Backup kv_store lookup
+              const { data: kvData } = await supabase.from('kv_store').select('value').eq('key', k).maybeSingle();
+              if (kvData && kvData.value) {
+                rawVal = JSON.parse(kvData.value);
+              }
+            }
+          } catch (dbErr) {
+            console.warn("Supabase idea load error skipped:", dbErr);
+          }
+        } else if (k.startsWith("user:") || k.startsWith("profile:")) {
+          try {
             const { data: kvData } = await supabase.from('kv_store').select('value').eq('key', k).maybeSingle();
             if (kvData && kvData.value) {
               rawVal = JSON.parse(kvData.value);
+              // Store locally for future cache speedup
+              if (typeof window !== "undefined" && window.localStorage) {
+                localStorage.setItem(k, JSON.stringify(rawVal));
+              }
             }
+          } catch (dbErr) {
+            console.warn("Supabase user/profile retrieval skipped:", dbErr);
           }
-        } catch (dbErr) {
-          console.warn("Supabase load error skipped:", dbErr);
         }
       }
 
-      if (!rawVal) {
-        if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.get) {
-          const r = await (window as any).storage.get(k);
-          rawVal = r ? JSON.parse(r.value) : null;
-        } else if (typeof window !== "undefined" && window.localStorage) {
-          const item = localStorage.getItem(k);
-          rawVal = item ? JSON.parse(item) : null;
-        }
-      }
-
+      // 3. Client-side decryption if the value is encrypted
       if (rawVal && typeof rawVal === "string" && rawVal.startsWith("SECURE:")) {
         const decrypted = await decryptData(rawVal);
         return JSON.parse(decrypted);
@@ -229,42 +297,54 @@ const store = {
       }
 
       // Supabase replication
-      if (supabase && k.startsWith("idea:")) {
-        const parts = k.split(":");
-        const uid = parts[1];
-        const ideaId = parts[2];
-        try {
-          const { error } = await supabase.from('vault_ideas').upsert({
-            id: ideaId,
-            user_uid: uid,
-            text: v.text,
-            score: v.score,
-            label: v.label,
-            qa: JSON.stringify(v.qa),
-            savedAt: v.savedAt
-          });
-          if (error) {
-            console.warn("Supabase upsert failed, retrying with generic key-value insert:", error.message);
-            await supabase.from('kv_store').upsert({ key: k, value: JSON.stringify(valToStore) });
-          } else {
-            console.log("✓ Successfully synchronized idea to Supabase Vault");
+      if (supabase) {
+        if (k.startsWith("idea:")) {
+          const parts = k.split(":");
+          const uid = parts[1];
+          const ideaId = parts[2];
+          try {
+            // Write to vault_ideas with encrypted payload in the text column
+            const { error } = await supabase.from('vault_ideas').upsert({
+              id: ideaId,
+              user_uid: uid,
+              text: typeof valToStore === "string" ? valToStore : JSON.stringify(v.text),
+              score: v.score || 0,
+              label: v.label || "vault",
+              qa: "{}",
+              savedAt: v.savedAt
+            });
+            if (error) {
+              console.warn("Supabase upsert failed, replicating to generic kv_store:", error.message);
+              await supabase.from('kv_store').upsert({ key: k, value: JSON.stringify(valToStore) });
+            }
+          } catch (dbErr) {
+            console.warn("Supabase ideas repository sync error:", dbErr);
           }
-        } catch (dbErr) {
-          console.warn("Supabase storage error skipped gracefully:", dbErr);
+        } else if (k.startsWith("user:") || k.startsWith("profile:")) {
+          try {
+            // Replicate account security schemas & encrypted profiles securely
+            await supabase.from('kv_store').upsert({ key: k, value: JSON.stringify(valToStore) });
+            console.log(`✓ Synchronized key '${k}' to cloud account sync.`);
+          } catch (dbErr) {
+            console.warn("Supabase user/profile synchronization skipped:", dbErr);
+          }
         }
       }
     } catch {}
   },
   async del(k: string) {
     try {
-      if (supabase && k.startsWith("idea:")) {
-        try {
+      if (supabase) {
+        if (k.startsWith("idea:")) {
           const parts = k.split(":");
           const ideaId = parts[2];
-          await supabase.from('vault_ideas').delete().eq('id', ideaId);
-        } catch (dbErr) {
-          console.warn("Supabase delete skipped:", dbErr);
+          try {
+            await supabase.from('vault_ideas').delete().eq('id', ideaId);
+          } catch {}
         }
+        try {
+          await supabase.from('kv_store').delete().eq('key', k);
+        } catch {}
       }
 
       if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.delete) {
@@ -399,6 +479,50 @@ function AuthScreen({ onAuth }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
+  const handleGitHubLogin = async () => {
+    setErr("");
+    setLoading(true);
+    try {
+      if (!supabase) {
+        setErr("Supabase configuration is missing. Setup Supabase to enable GitHub login.");
+        setLoading(false);
+        return;
+      }
+
+      const redirectUri = `${window.location.origin}/auth/callback`;
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: {
+          redirectTo: redirectUri,
+          skipBrowserRedirect: true
+        }
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data?.url) {
+        const authWindow = window.open(
+          data.url,
+          "oauth_popup",
+          "width=600,height=700,status=no,resizable=yes,scrollbars=yes"
+        );
+
+        if (!authWindow) {
+          setErr("Popup blocked! Please allow popups to log in with GitHub.");
+        }
+      } else {
+        throw new Error("No authorization URL was returned from Supabase.");
+      }
+    } catch (e: any) {
+      console.error("GitHub Login Failure:", e);
+      setErr(`GitHub Handshake Failed: ${e.message || e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLocalCryptAuth = async () => {
     setErr("");
     setLoading(true);
@@ -431,7 +555,7 @@ function AuthScreen({ onAuth }) {
         
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
         const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-        const passwordHash = await hashPasswordSHA256(password);
+        const passwordHash = await hashPasswordPBKDF2(password, saltHex);
         
         const user = { 
           uid, 
@@ -454,10 +578,26 @@ function AuthScreen({ onAuth }) {
           return;
         }
         
-        const shaHash = await hashPasswordSHA256(password);
-        const legacyHash = btoa(password);
+        let isValid = false;
+        if (user.saltHex) {
+          const pbkdf2Check = await hashPasswordPBKDF2(password, user.saltHex);
+          isValid = user.passwordHash === pbkdf2Check;
+        } else {
+          // Safe fallback checking oldest sha256 credentials in isolated scope
+          const shaHash = await hashPasswordSHA256(password);
+          isValid = user.passwordHash === shaHash;
+          
+          if (isValid) {
+            // Auto upgrade profile schema integrity to secure PBKDF2 instantly
+            const salt = window.crypto.getRandomValues(new Uint8Array(16));
+            const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
+            const freshPBKDF2Hash = await hashPasswordPBKDF2(password, saltHex);
+            user.saltHex = saltHex;
+            user.passwordHash = freshPBKDF2Hash;
+            await store.set(`user:${uid}`, user);
+          }
+        }
         
-        const isValid = user.passwordHash === shaHash || user.passwordHash === legacyHash;
         if (!isValid) {
           setErr("Invalid email or password.");
           setLoading(false);
@@ -469,7 +609,7 @@ function AuthScreen({ onAuth }) {
           const salt = window.crypto.getRandomValues(new Uint8Array(16));
           sHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
           user.saltHex = sHex;
-          user.passwordHash = shaHash;
+          user.passwordHash = await hashPasswordPBKDF2(password, sHex);
           await store.set(`user:${uid}`, user);
         }
         
@@ -490,21 +630,21 @@ function AuthScreen({ onAuth }) {
 
   const inp = { 
     width: "100%", 
-    background: "#090909", 
-    border: "1px solid #181818", 
+    background: "#1B1815", 
+    border: "1px solid #2E2A24", 
     borderRadius: "6px", 
-    color: "#ffffff", 
+    color: "#F4EFE3", 
     fontSize: "0.85rem", 
     padding: "0.85rem 1rem", 
     outline: "none", 
-    fontFamily: "monospace", 
+    fontFamily: "Inter, sans-serif", 
     boxSizing: "border-box" as const 
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#050505", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "monospace" }}>
-      <div style={{ width: "100%", maxWidth: "420px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "rgba(255,255,255,0.4)", marginBottom: "1.2rem", display: "block", textAlign: "center" }}>Project Specification 2026</span>
+    <div style={{ minHeight: "100vh", background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "Inter, sans-serif" }}>
+      <div style={{ width: "100%", maxWidth: "420px", display: "flex", flexDirection: "column", alignItems: "center", background: "#1B1815", padding: "2.5rem 2rem", borderRadius: "12px", border: "1px solid #2E2A24", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
+        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "rgba(244,239,227,0.4)", marginBottom: "1.2rem", display: "block", textAlign: "center", fontFamily: "monospace" }}>Project Specification 2026</span>
         
         {/* PREMIUM ROYAL LOGO CENTERPIECE */}
         <div style={{ 
@@ -514,18 +654,18 @@ function AuthScreen({ onAuth }) {
           width: "90px", 
           height: "90px", 
           borderRadius: "50%", 
-          background: "radial-gradient(circle, #2a220f 0%, #080705 100%)", 
+          background: "radial-gradient(circle, #2a220f 0%, #1b1815 100%)", 
           border: "2px solid #D4AF37", 
-          boxShadow: "0 0 28px rgba(212, 175, 55, 0.4), inset 0 0 12px rgba(212, 175, 55, 0.25)", 
+          boxShadow: "0 0 28px rgba(212, 175, 55, 0.45), inset 0 0 12px rgba(212, 175, 55, 0.3)", 
           padding: "5px",
-          marginBottom: "1rem",
+          marginBottom: "1.2rem",
           transition: "transform 0.3s ease",
         }}>
           <img 
             src={forgeLogo} 
             alt="FORGE Logo" 
             onError={(e) => {
-              (e.target as HTMLImageElement).src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="43" stroke="%23D4AF37" stroke-width="4"/><path d="M50 20 L27 40 L37 40 L30 75 L50 55 L70 75 L63 40 L73 40 Z" fill="%23C8FF00" filter="drop-shadow(0 0 5px %23C8FF00)"/></svg>`;
+              (e.target as HTMLImageElement).src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="43" stroke="%23D4AF37" stroke-width="4"/><path d="M50 20 L27 40 L37 40 L30 75 L50 55 L70 75 L63 40 L73 40 Z" fill="%23C8A24E" filter="drop-shadow(0 0 5px %23C8A24E)"/></svg>`;
             }}
             style={{ 
               width: "100%", 
@@ -536,12 +676,12 @@ function AuthScreen({ onAuth }) {
           />
         </div>
 
-        <h1 style={{ color: LIME, fontSize: "3.2rem", fontWeight: "900", letterSpacing: "7px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "monospace", textAlign: "center" }}>FORGE</h1>
+        <h1 style={{ color: LIME, fontSize: "2.7rem", fontWeight: "900", letterSpacing: "5px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "Inter, sans-serif", textAlign: "center" }}>FORGE</h1>
         <p style={{ color: "#D4AF37", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 1.8rem", fontFamily: "monospace", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
 
-        <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.5rem", border: "1px solid #181818", borderRadius: "6px", overflow: "hidden" }}>
+        <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.5rem", border: "1px solid #2E2A24", borderRadius: "6px", overflow: "hidden" }}>
           {["login", "signup"].map(m => (
-            <button key={m} onClick={() => { setMode(m); setErr(""); }} style={{ flex: 1, background: mode === m ? LIME : "transparent", color: mode === m ? "#050505" : "rgba(255,255,255,0.4)", border: "none", padding: "0.72rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase", transition: "all .2s" }}>{m}</button>
+            <button key={m} onClick={() => { setMode(m); setErr(""); }} style={{ flex: 1, background: mode === m ? LIME : "transparent", color: mode === m ? "#1B1815" : "rgba(244,239,227,0.5)", border: "none", padding: "0.72rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase", transition: "all .2s" }}>{m}</button>
           ))}
         </div>
 
@@ -551,13 +691,48 @@ function AuthScreen({ onAuth }) {
           <input style={inp} placeholder="Password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && submit()} />
         </div>
 
-        {err && <div style={{ color: PINK, fontSize: "0.74rem", marginTop: "1rem", background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.15)", borderRadius: "6px", padding: "0.55rem 0.85rem", width: "100%", boxSizing: "border-box", textAlign: "center" }}>{err}</div>}
+        {err && <div style={{ color: "#F4EFE3", fontSize: "0.74rem", marginTop: "1rem", background: "rgba(92, 32, 38, 0.4)", border: "1px solid #5C2026", borderRadius: "6px", padding: "0.55rem 0.85rem", width: "100%", boxSizing: "border-box", textAlign: "center" }}>{err}</div>}
         
-        <button onClick={submit} disabled={loading} style={{ width: "100%", background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: loading ? "not-allowed" : "pointer", fontFamily: "monospace", marginTop: "1.2rem", opacity: loading ? 0.5 : 1 }}>
+        <button onClick={submit} disabled={loading} style={{ width: "100%", background: LIME, color: "#1B1815", border: "none", borderRadius: "6px", padding: "0.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: loading ? "not-allowed" : "pointer", fontFamily: "monospace", marginTop: "1.2rem", opacity: loading ? 0.5 : 1 }}>
           {loading ? "…" : mode === "login" ? "LOG IN →" : "CREATE ACCOUNT →"}
         </button>
+
+        <div style={{ display: "flex", alignItems: "center", width: "100%", margin: "1.5rem 0 1rem" }}>
+          <div style={{ flex: 1, height: "1px", background: "rgba(244,239,227,0.12)" }} />
+          <span style={{ padding: "0 0.75rem", fontSize: "9px", color: "rgba(244,239,227,0.4)", letterSpacing: "2px", fontFamily: "monospace", textTransform: "uppercase" }}>OR CONTINUE WITH</span>
+          <div style={{ flex: 1, height: "1px", background: "rgba(244,239,227,0.12)" }} />
+        </div>
+
+        <button 
+          onClick={handleGitHubLogin} 
+          disabled={loading} 
+          style={{ 
+            width: "100%", 
+            background: "#24292e", 
+            color: "#ffffff", 
+            border: "1px solid rgb(46, 42, 36)", 
+            borderRadius: "6px", 
+            padding: "0.85rem", 
+            fontSize: "11px", 
+            fontWeight: "900", 
+            letterSpacing: "2px", 
+            cursor: loading ? "not-allowed" : "pointer", 
+            fontFamily: "monospace", 
+            display: "flex", 
+            alignItems: "center", 
+            justifyContent: "center", 
+            gap: "0.5rem",
+            textTransform: "uppercase",
+            transition: "all 0.2s"
+          }}
+        >
+          <svg aria-hidden="true" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: "4px" }}>
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          GitHub Account
+        </button>
         
-        <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.62rem", textAlign: "center", marginTop: "1.5rem", lineHeight: "1.5" }}>
+        <p style={{ color: "rgba(244,239,227,0.4)", fontSize: "0.68rem", textAlign: "center", marginTop: "1.5rem", lineHeight: "1.5" }}>
           Secure zero-trust cryptographic accounts encrypt your ideas locally using AES-GCM (PBKDF2 derivative) and replicate directly to your Supabase Vault in real-time.
         </p>
       </div>
@@ -650,27 +825,27 @@ function Onboarding({ user, onDone }) {
   const progress = ((step) / steps.length) * 100;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#050505", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "monospace" }}>
-      <div style={{ width: "100%", maxWidth: "520px" }}>
+    <div style={{ minHeight: "100vh", background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "Inter, sans-serif" }}>
+      <div style={{ width: "100%", maxWidth: "520px", background: "#1B1815", padding: "2.5rem 2rem", borderRadius: "12px", border: "1px solid #2E2A24", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
           <span style={{ fontSize: "1.35rem", fontWeight: "900", color: LIME, letterSpacing: "1px", fontFamily: "monospace" }}>FORGE SYSTEM</span>
           <div style={{ display: "flex", gap: "0.85rem", alignItems: "center" }}>
-            <button onClick={skip} disabled={loading} style={{ background: "transparent", border: "1px solid #222", borderRadius: "4px", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: "10px", padding: "3px 8px", fontFamily: "monospace" }}>SKIP FOR NOW</button>
-            <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.68rem", fontFamily: "monospace" }}>{step + 1} / {steps.length}</span>
+            <button onClick={skip} disabled={loading} style={{ background: "transparent", border: "1px solid #2E2A24", borderRadius: "4px", color: "rgba(244,239,227,0.5)", cursor: "pointer", fontSize: "10px", padding: "3px 8px", fontFamily: "monospace" }}>SKIP FOR NOW</button>
+            <span style={{ color: "rgba(244,239,227,0.4)", fontSize: "0.68rem", fontFamily: "monospace" }}>{step + 1} / {steps.length}</span>
           </div>
         </div>
-        <div style={{ height: "4px", background: "rgba(255,255,255,0.06)", borderRadius: "6px", marginBottom: "3rem", overflow: "hidden", border: "1px solid #1a1a1a" }}>
+        <div style={{ height: "4px", background: "rgba(244,239,227,0.06)", borderRadius: "6px", marginBottom: "3rem", overflow: "hidden", border: "1px solid #2E2A24" }}>
           <div style={{ height: "100%", background: LIME, width: `${progress}%`, transition: "width .4s ease" }} />
         </div>
         <p style={{ color: PURPLE, fontSize: "10px", letterSpacing: "0.25em", margin: "0 0 0.6rem", textTransform: "uppercase", fontWeight: "bold", fontFamily: "monospace" }}>Building your founder profile</p>
-        <p style={{ color: "#ffffff", fontSize: "1.38rem", margin: "0 0 2rem", fontWeight: "bold", lineHeight: "1.6", fontFamily: "monospace" }}>{cur.label}</p>
+        <p style={{ color: "#F4EFE3", fontSize: "1.38rem", margin: "0 0 2rem", fontWeight: "bold", lineHeight: "1.6" }}>{cur.label}</p>
         {cur.type === "input" && (
-          <input style={{ width: "100%", background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", color: "#ffffff", fontSize: "0.95rem", padding: "1rem 1.1rem", outline: "none", fontFamily: "monospace", boxSizing: "border-box" }}
+          <input style={{ width: "100%", background: "#0F0D0B", border: "1px solid #2E2A24", borderRadius: "6px", color: "#F4EFE3", fontSize: "0.95rem", padding: "1rem 1.1rem", outline: "none", fontFamily: "Inter, sans-serif", boxSizing: "border-box" }}
             placeholder={cur.placeholder} value={val} onChange={e => setVal(e.target.value)}
             onKeyDown={e => e.key === "Enter" && val.trim() && next()} autoFocus />
         )}
         {cur.type === "textarea" && (
-          <textarea style={{ width: "100%", background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", color: "#ffffff", fontSize: "0.92rem", padding: "1rem 1.1rem", outline: "none", fontFamily: "monospace", lineHeight: "1.6", height: "100px", resize: "none", boxSizing: "border-box" }}
+          <textarea style={{ width: "100%", background: "#0F0D0B", border: "1px solid #2E2A24", borderRadius: "6px", color: "#F4EFE3", fontSize: "0.92rem", padding: "1rem 1.1rem", outline: "none", fontFamily: "Inter, sans-serif", lineHeight: "1.6", height: "100px", resize: "none", boxSizing: "border-box" }}
             placeholder={cur.placeholder} value={val} onChange={e => setVal(e.target.value)} autoFocus />
         )}
         {cur.type === "choice" && (
@@ -678,18 +853,18 @@ function Onboarding({ user, onDone }) {
             {cur.options.map(o => {
               const sel = val === o;
               return (
-                <button key={o} onClick={() => setVal(o)} style={{ background: sel ? `${LIME}0d` : "#090909", border: `1px solid ${sel ? LIME : "#1c1c1c"}`, borderRadius: "6px", padding: "0.85rem 1.1rem", color: sel ? LIME : "rgba(255, 255, 255, 0.6)", fontFamily: "monospace", fontSize: "0.85rem", cursor: "pointer", textAlign: "left", transition: "all .15s" }}>{o}</button>
+                <button key={o} onClick={() => setVal(o)} style={{ background: sel ? `${LIME}0d` : "#0F0D0B", border: `1px solid ${sel ? LIME : "#2E2A24"}`, borderRadius: "6px", padding: "0.85rem 1.1rem", color: sel ? LIME : "rgba(244, 239, 227, 0.75)", fontFamily: "Inter, sans-serif", fontSize: "0.85rem", cursor: "pointer", textAlign: "left", transition: "all .15s" }}>{o}</button>
               );
             })}
           </div>
         )}
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
           <button onClick={next} disabled={!val.trim() || loading}
-            style={{ flex: 1, background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.85rem 2rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: !val.trim() ? "not-allowed" : "pointer", fontFamily: "monospace", opacity: !val.trim() ? 0.25 : 1 }}>
+            style={{ flex: 1, background: LIME, color: "#1B1815", border: "none", borderRadius: "6px", padding: "0.85rem 2rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: !val.trim() ? "not-allowed" : "pointer", fontFamily: "monospace", opacity: !val.trim() ? 0.25 : 1 }}>
             {loading ? "SAVING…" : step === steps.length - 1 ? "ENTER FORGE SYSTEM →" : "NEXT →"}
           </button>
           {step > 0 && (
-            <button onClick={back} style={{ background: "transparent", color: "rgba(255, 255, 255, 0.5)", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "0.85rem 1.2rem", fontSize: "11px", cursor: "pointer", fontFamily: "monospace" }}>
+            <button onClick={back} style={{ background: "transparent", color: "rgba(244, 239, 227, 0.6)", border: "1px solid #2E2A24", borderRadius: "6px", padding: "0.85rem 1.2rem", fontSize: "11px", cursor: "pointer", fontFamily: "monospace" }}>
               ← BACK
             </button>
           )}
@@ -719,58 +894,58 @@ function ProfilePanel({ profile, user, onUpdate, onLogout, onClose, onOpenFeedba
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(4px)" }}>
-      <div style={{ width: "min(500px,100vw)", background: "#080808", borderLeft: "1px solid #1c1c1c", display: "flex", flexDirection: "column", height: "100vh" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem", borderBottom: "1px solid #1c1c1c", flexShrink: 0 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(4px)", fontFamily: "Inter, sans-serif" }}>
+      <div style={{ width: "min(500px,100vw)", background: "#1B1815", borderLeft: "1px solid #2E2A24", display: "flex", flexDirection: "column", height: "100vh" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem", borderBottom: "1px solid #2E2A24", flexShrink: 0 }}>
           <div>
             <div style={{ color: LIME, fontSize: "0.75rem", fontWeight: "900", letterSpacing: "3px", fontFamily: "monospace" }}>FOUNDER PROFILE</div>
-            <div style={{ color: "rgba(255, 255, 255, 0.4)", fontSize: "0.6rem", letterSpacing: "1.5px", fontFamily: "monospace", marginTop: "2px" }}>{profile?.name?.toUpperCase()}</div>
+            <div style={{ color: "rgba(244, 239, 227, 0.6)", fontSize: "0.6rem", letterSpacing: "1.5px", fontFamily: "monospace", marginTop: "2px" }}>{profile?.name?.toUpperCase()}</div>
           </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             {editing
-              ? <button onClick={save} style={{ background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "5px 12px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.68rem", fontWeight: "900" }}>SAVE</button>
-              : <button onClick={() => { setDraft({ ...profile }); setEditing(true); }} style={{ background: "transparent", border: "1px solid #1c1c1c", color: "#ffffff", borderRadius: "6px", padding: "5px 12px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.68rem" }}>EDIT</button>
+              ? <button onClick={save} style={{ background: LIME, color: "#1B1815", border: "none", borderRadius: "6px", padding: "5px 12px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.68rem", fontWeight: "900" }}>SAVE</button>
+              : <button onClick={() => { setDraft({ ...profile }); setEditing(true); }} style={{ background: "transparent", border: "1px solid #2E2A24", color: "#F4EFE3", borderRadius: "6px", padding: "5px 12px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.68rem" }}>EDIT</button>
             }
-            <button onClick={onClose} style={{ background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.3)", color: PINK, borderRadius: "6px", padding: "5px 11px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.78rem", fontWeight: "bold" }}>✕</button>
+            <button onClick={onClose} style={{ background: "rgba(92, 32, 38, 0.15)", border: "1px solid rgba(92, 32, 38, 0.4)", color: "#F4EFE3", borderRadius: "6px", padding: "5px 11px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.78rem", fontWeight: "bold" }}>✕</button>
           </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
           {user?.isGuest && (
-            <div style={{ background: "rgba(200, 255, 0, 0.04)", border: "1px dashed rgba(200, 255, 0, 0.25)", borderRadius: "6px", padding: "1.1rem", marginBottom: "1.5rem" }}>
+            <div style={{ background: "rgba(200, 255, 0, 0.02)", border: "1px dashed rgba(200, 255, 0, 0.15)", borderRadius: "6px", padding: "1.1rem", marginBottom: "1.5rem" }}>
               <div style={{ color: LIME, fontSize: "10px", fontWeight: "900", fontFamily: "monospace", letterSpacing: "1.5px", marginBottom: "0.3rem" }}>🚨 GUEST SANDBOX ACTIVE</div>
-              <p style={{ color: "rgba(255,255,255,0.65)", fontSize: "0.74rem", fontFamily: "monospace", lineHeight: "1.4", margin: "0 0 0.8rem" }}>
-                You are currently building within a transient session. Create a secure personal account now to seamlessly synchronize and safeguard all your ideas, formulas, and history in real-time.
+              <p style={{ color: "rgba(244,239,227,0.75)", fontSize: "0.8rem", lineHeight: "1.5", margin: "0 0 0.8rem" }}>
+                You are pioneering inside a clean, transient Guest sandbox. Transition your work to a personal, zero-trust cryptographic profile to safely secure ideas to your cloud Vault forever.
               </p>
               <button 
                 onClick={onUpgrade}
-                style={{ width: "100%", background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "8px 12px", fontSize: "10px", fontWeight: "900", fontFamily: "monospace", cursor: "pointer", letterSpacing: "1px" }}
+                style={{ width: "100%", background: LIME, color: "#1B1815", border: "none", borderRadius: "4px", padding: "8px 12px", fontSize: "10px", fontWeight: "900", fontFamily: "monospace", cursor: "pointer", letterSpacing: "1px" }}
               >
                 CREATE SECURE ACCOUNT NOW
               </button>
             </div>
           )}
           {profile?.incomplete && (
-            <div style={{ background: "rgba(184,127,255,0.1)", border: "1px solid rgba(184,127,255,0.3)", borderRadius: "6px", padding: "0.8rem 1rem", marginBottom: "1.5rem", color: PURPLE, fontSize: "11px", fontWeight: "bold" }}>
+            <div style={{ background: "rgba(184,127,255,0.06)", border: "1px solid rgba(184,127,255,0.2)", borderRadius: "6px", padding: "0.8rem 1rem", marginBottom: "1.5rem", color: PURPLE, fontSize: "11px", fontWeight: "bold" }}>
               ⚡ Profile Incomplete: Fill in these details to sharpen AI simulations.
             </div>
           )}
           {/* score badge */}
-          <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.5rem" }}>
+          <div style={{ background: "#0F0D0B", border: "1px solid #2E2A24", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.5rem" }}>
             <div style={{ color: PURPLE, fontSize: "10px", letterSpacing: "0.2em", marginBottom: "0.4rem", textTransform: "uppercase", fontWeight: "bold", fontFamily: "monospace" }}>FOUNDER IDENTITY</div>
-            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "0.85rem", lineHeight: "1.65", fontFamily: "monospace" }}>{profile?.bio || "No summary provided."}</div>
+            <div style={{ color: "#F4EFE3", fontSize: "0.85rem", lineHeight: "1.65" }}>{profile?.bio || "No summary provided."}</div>
           </div>
           {fields.map(f => (
             <div key={f.key} style={{ marginBottom: "1.1rem" }}>
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.2em", marginBottom: "0.3rem", fontFamily: "monospace" }}>{f.label}</div>
+              <div style={{ color: "rgba(244,239,227,0.5)", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.2em", marginBottom: "0.3rem", fontFamily: "monospace" }}>{f.label}</div>
               {editing
-                ? <textarea style={{ width: "100%", background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", color: "#ffffff", fontSize: "0.83rem", padding: "0.6rem 0.8rem", outline: "none", fontFamily: "monospace", lineHeight: "1.6", minHeight: "60px", resize: "vertical", boxSizing: "border-box" }}
+                ? <textarea style={{ width: "100%", background: "#0F0D0B", border: "1px solid #2E2A24", borderRadius: "6px", color: "#F4EFE3", fontSize: "0.83rem", padding: "0.6rem 0.8rem", outline: "none", fontFamily: "Inter, sans-serif", lineHeight: "1.6", minHeight: "60px", resize: "vertical", boxSizing: "border-box" }}
                   value={draft[f.key] || ""} onChange={e => setDraft(d => ({ ...d, [f.key]: e.target.value }))} />
-                : <div style={{ color: "rgba(255, 255, 255, 0.75)", fontSize: "0.83rem", lineHeight: "1.6", fontFamily: "monospace" }}>{profile?.[f.key] || "—"}</div>
+                : <div style={{ color: "rgba(244, 239, 227, 0.85)", fontSize: "0.83rem", lineHeight: "1.6" }}>{profile?.[f.key] || "—"}</div>
               }
             </div>
           ))}
-          <button onClick={onOpenFeedback} style={{ background: "rgba(200, 255, 0, 0.08)", border: "1px solid rgba(200, 255, 0, 0.3)", color: LIME, borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "1rem", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.45rem" }}>📣 GIVE FEEDBACK</button>
-          <button onClick={onLogout} style={{ background: "transparent", border: "1px solid rgba(255, 60, 120, 0.25)", color: PINK, borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "0.6rem", width: "100%" }}>LOG OUT</button>
+          <button onClick={onOpenFeedback} style={{ background: "rgba(200, 255, 0, 0.04)", border: "1px solid rgba(200, 255, 0, 0.2)", color: LIME, borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "1rem", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.45rem" }}>📣 GIVE FEEDBACK</button>
+          <button onClick={onLogout} style={{ background: "transparent", border: "1px solid rgba(92, 32, 38, 0.4)", color: "#F4EFE3", borderRadius: "6px", padding: "0.65rem 1.2rem", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.15em", marginTop: "0.6rem", width: "100%" }}>LOG OUT</button>
         </div>
       </div>
     </div>
@@ -797,23 +972,23 @@ function HistoryPanel({ uid, onLoad, onClose }) {
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(4px)" }}>
-      <div style={{ width: "min(480px,100vw)", background: "#080808", borderLeft: "1px solid #1c1c1c", display: "flex", flexDirection: "column", height: "100vh" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem", borderBottom: "1px solid #1c1c1c", flexShrink: 0 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", zIndex: 3000, display: "flex", justifyContent: "flex-end", backdropFilter: "blur(4px)", fontFamily: "Inter, sans-serif" }}>
+      <div style={{ width: "min(480px,100vw)", background: "#1B1815", borderLeft: "1px solid #2E2A24", display: "flex", flexDirection: "column", height: "100vh" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem", borderBottom: "1px solid #2E2A24", flexShrink: 0 }}>
           <div style={{ color: LIME, fontSize: "0.75rem", fontWeight: "900", letterSpacing: "3px", fontFamily: "monospace" }}>IDEA VAULT</div>
-          <button onClick={onClose} style={{ background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.3)", color: PINK, borderRadius: "6px", padding: "5px 11px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.78rem", fontWeight: "bold" }}>✕</button>
+          <button onClick={onClose} style={{ background: "rgba(92, 32, 38, 0.15)", border: "1px solid rgba(92, 32, 38, 0.4)", color: "#F4EFE3", borderRadius: "6px", padding: "5px 11px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.78rem", fontWeight: "bold" }}>✕</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "1.2rem 1.5rem" }}>
-          {loading && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", fontFamily: "monospace" }}>Loading…</div>}
-          {!loading && ideas.length === 0 && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.82rem", fontFamily: "monospace" }}>No saved ideas yet. Start one and it'll appear here.</div>}
+          {loading && <div style={{ color: "rgba(244,239,227,0.5)", fontSize: "0.75rem", fontFamily: "monospace" }}>Loading…</div>}
+          {!loading && ideas.length === 0 && <div style={{ color: "rgba(244,239,227,0.5)", fontSize: "0.82rem" }}>No saved ideas yet. Start one and it'll appear here.</div>}
           {ideas.map(idea => (
-            <div key={idea.id} style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1rem 1.1rem", marginBottom: "0.75rem" }}>
-              <div style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "0.82rem", marginBottom: "0.55rem", fontFamily: "monospace", lineHeight: "1.5" }}>{idea.text?.slice(0, 100)}{idea.text?.length > 100 ? "…" : ""}</div>
+            <div key={idea.id} style={{ background: "#0F0D0B", border: "1px solid #2E2A24", borderRadius: "6px", padding: "1rem 1.1rem", marginBottom: "0.75rem" }}>
+              <div style={{ color: "#F4EFE3", fontSize: "0.82rem", marginBottom: "0.55rem", lineHeight: "1.5" }}>{idea.text?.slice(0, 100)}{idea.text?.length > 100 ? "…" : ""}</div>
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
-                {idea.score && <span style={{ color: LIME, fontSize: "10px", border: "1px solid #1c1c1c", padding: "2px 7px", borderRadius: "6px", background: "rgba(255,255,255,0.02)", fontWeight: "bold", fontFamily: "monospace" }}>{idea.score} — {idea.label}</span>}
-                <span style={{ color: "rgba(255, 255, 255, 0.3)", fontSize: "0.62rem", fontFamily: "monospace" }}>{new Date(idea.savedAt).toLocaleDateString()}</span>
+                {idea.score && <span style={{ color: LIME, fontSize: "10px", border: "1px solid #2E2A24", padding: "2px 7px", borderRadius: "6px", background: "rgba(244,239,227,0.03)", fontWeight: "bold", fontFamily: "monospace" }}>{idea.score} — {idea.label}</span>}
+                <span style={{ color: "rgba(244, 239, 227, 0.4)", fontSize: "0.62rem", fontFamily: "monospace" }}>{new Date(idea.savedAt).toLocaleDateString()}</span>
                 <div style={{ display: "flex", gap: "0.4rem" }}>
-                  <button onClick={() => { onLoad(idea); onClose(); }} style={{ background: "transparent", border: "1px solid #1c1c1c", color: "#ffffff", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>LOAD</button>
+                  <button onClick={() => { onLoad(idea); onClose(); }} style={{ background: "transparent", border: "1px solid #2E2A24", color: "#F4EFE3", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>LOAD</button>
                   <button onClick={() => del(idea.id)} style={{ background: "transparent", border: "1px solid rgba(255,60,120,0.25)", color: PINK, borderRadius: "6px", padding: "4px 8px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.62rem" }}>✕</button>
                 </div>
               </div>
@@ -1496,6 +1671,113 @@ function SignatureSeal() {
   );
 }
 
+// ── OAUTH CALLBACK HANDLER ──────────────────────────────
+function OAuthCallback() {
+  const [status, setStatus] = useState("Architecting cryptographic access credentials...");
+
+  useEffect(() => {
+    const processOAuthSession = async () => {
+      try {
+        if (!supabase) {
+          setStatus("Supabase client is not initialized in location configurations.");
+          return;
+        }
+
+        // Supabase client auto-parses token information from document hash/query on initialize or getSession
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          throw error;
+        }
+
+        if (session) {
+          if (window.opener) {
+            window.opener.postMessage({ 
+              type: 'OAUTH_AUTH_SUCCESS', 
+              session 
+            }, window.location.origin);
+            setStatus("Core authorization secured. Completing handshake...");
+            setTimeout(() => {
+              window.close();
+            }, 800);
+          } else {
+            window.location.href = "/";
+          }
+        } else {
+          // Fallback interval to handle asynchronous Supabase session parsing
+          const interval = setInterval(async () => {
+            const { data: { session: checkSession } } = await supabase.auth.getSession();
+            if (checkSession) {
+              clearInterval(interval);
+              if (window.opener) {
+                window.opener.postMessage({ 
+                  type: 'OAUTH_AUTH_SUCCESS', 
+                  session: checkSession 
+                }, window.location.origin);
+                setStatus("Core authorization secured. Completing handshake...");
+                setTimeout(() => window.close(), 800);
+              } else {
+                window.location.href = "/";
+              }
+            }
+          }, 300);
+
+          // Force stop checking after 8 seconds and redirect
+          setTimeout(() => {
+            clearInterval(interval);
+            setStatus("No active cryptographic session detected. Redirecting to vault door...");
+            setTimeout(() => {
+              window.location.href = "/";
+            }, 1000);
+          }, 8000);
+        }
+      } catch (err: any) {
+        console.error("Cryptographic authorization handshake failed:", err);
+        setStatus(`Gateway handshake failed: ${err.message || err}`);
+      }
+    };
+
+    processOAuthSession();
+  }, []);
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", color: "#F4EFE3", fontFamily: "Inter, sans-serif", textAlign: "center" }}>
+      <div style={{ background: "#1B1815", padding: "3rem 2.5rem", borderRadius: "12px", border: "1px solid #2E2A24", maxWidth: "460px", boxShadow: "0 12px 40px rgba(0,0,0,0.6)" }}>
+        <p style={{ color: "rgba(244,239,227,0.4)", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", marginBottom: "1.2rem", display: "block" }}>SECURED HANDSHAKE</p>
+        <div style={{ 
+          display: "inline-flex", 
+          alignItems: "center", 
+          justifyContent: "center", 
+          width: "70px", 
+          height: "70px", 
+          borderRadius: "50%", 
+          background: "radial-gradient(circle, #2a220f 0%, #1b1815 100%)", 
+          border: "2px solid #D4AF37", 
+          boxShadow: "0 0 20px rgba(212, 175, 55, 0.3)",
+          marginBottom: "1.5rem"
+        }}>
+          <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="#C8A24E" strokeWidth="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0110 0v4" />
+          </svg>
+        </div>
+        <h2 style={{ color: "#C8A24E", fontSize: "1.42rem", fontWeight: "900", margin: "0 0 0.8rem", letterSpacing: "0.5px" }}>FORGE SECURE LINK</h2>
+        <p style={{ fontSize: "0.85rem", lineHeight: "1.6", color: "rgba(244, 239, 227, 0.7)", margin: "0 auto", maxWidth: "340px" }}>{status}</p>
+        <div style={{ 
+          marginTop: "2rem", 
+          display: "inline-block",
+          border: "2px solid #C8A24E", 
+          borderTopColor: "transparent", 
+          borderRadius: "50%", 
+          width: "24px", 
+          height: "24px", 
+          animation: "spin 1s linear infinite" 
+        }} />
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN APP ──────────────────────────────────────────────
 export default function App() {
   const [appState, setAppState] = useState("loading"); // loading | auth | onboarding | app
@@ -1691,8 +1973,9 @@ export default function App() {
 
       const session = await store.get("session");
       if (!session) {
-        // Automatic high-integrity Guest Sandbox Entry
-        setUser({ uid: "guest_user", email: "guest@forge.ai", isGuest: true, name: "Guest Visionary" });
+        // Automatic high-integrity Guest Sandbox Entry with globally unique, per-session UID
+        const guestUid = getOrCreateGuestUid();
+        setUser({ uid: guestUid, email: "guest@forge.ai", isGuest: true, name: "Guest Visionary" });
         setProfile({
           name: "Guest Visionary",
           age: "25",
@@ -1711,14 +1994,25 @@ export default function App() {
         return;
       }
       
-      // 3. Absolute protection: If local session exists but key has been purged from memory, force login
-      if (!activeEncryptionKey) {
+      // 3. Absolute protection: If local session exists but key has been purged from memory, force login (bypass for OAuth sessions)
+      if (!activeEncryptionKey && session.authType !== "oauth") {
         await store.del("session");
         setAppState("auth");
         return;
       }
 
-      const u = await store.get(`user:${session.uid}`);
+      let u = await store.get(`user:${session.uid}`);
+      if (!u && session.authType === "oauth") {
+        u = {
+          uid: session.uid,
+          email: session.email,
+          name: session.name,
+          authType: "oauth",
+          createdAt: Date.now()
+        };
+        await store.set(`user:${session.uid}`, u);
+      }
+
       if (!u) { setAppState("auth"); return; }
       const p = await store.get(`profile:${session.uid}`);
       setUser(u);
@@ -1727,12 +2021,48 @@ export default function App() {
     })();
   }, []);
 
+  // Listen for message from OAuth Callback Handshake inside child popup
+  useEffect(() => {
+    const handleOauthMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        const sessionObj = event.data.session;
+        if (sessionObj && sessionObj.user) {
+          const email = sessionObj.user.email || `github_user_${sessionObj.user.id}@forge.dev`;
+          const uid = sessionObj.user.id;
+          const name = sessionObj.user.user_metadata?.full_name || sessionObj.user.user_metadata?.name || email.split("@")[0] || "Founder";
+          
+          const u = {
+            uid,
+            email,
+            name,
+            createdAt: Date.now(),
+            authType: "oauth"
+          };
+
+          // Store session and user entry in client-side persistence
+          await store.set(`user:${uid}`, u);
+          await store.set("session", { uid, email, name, authType: "oauth" });
+          
+          if (appState === "auth") {
+            handleAuth(u, false);
+          } else {
+            handleGuestAuth(u, false);
+          }
+        }
+      }
+    };
+    window.addEventListener('message', handleOauthMessage);
+    return () => window.removeEventListener('message', handleOauthMessage);
+  }, [appState]);
+
   const migrateGuestData = async (newUid: string) => {
     try {
+      const guestUid = getOrCreateGuestUid();
       console.log("🚀 Migrating transient Guest session records to personal profile: ", newUid);
       
       // 1. Migrate Ideas from local / supabase
-      const guestKeys = await store.list("idea:guest_user:");
+      const guestKeys = await store.list(`idea:${guestUid}:`);
       console.log(`Found ${guestKeys.length} guest ideas to migrate.`);
       for (const key of guestKeys) {
         const ideaData = await store.get(key);
@@ -1752,18 +2082,19 @@ export default function App() {
       }
 
       // 2. Migrate Profile if guest profile exists
-      const guestProfile = await store.get("profile:guest_user") || profile;
+      const guestProfile = await store.get(`profile:${guestUid}`) || profile;
       if (guestProfile) {
         await store.set(`profile:${newUid}`, {
           ...guestProfile,
           uid: newUid,
           name: guestProfile.name === "Guest Visionary" ? guestProfile.name : guestProfile.name
         });
-        await store.del("profile:guest_user");
+        await store.del(`profile:${guestUid}`);
       }
 
       // 3. Clear guest specific key in localstorage
       localStorage.removeItem("forge_guest_ignitions");
+      localStorage.removeItem("forge_guest_uid");
 
       console.log("✓ All guest records transitioned successfully to active secure profile.");
     } catch (migErr) {
@@ -1773,8 +2104,9 @@ export default function App() {
 
   const handleAuth = async (u, isNew) => {
     const wasGuest = user?.isGuest;
+    const currentGuestUid = getOrCreateGuestUid();
     setUser(u);
-    if (wasGuest && u.uid !== "guest_user") {
+    if (wasGuest && u.uid !== currentGuestUid) {
       await migrateGuestData(u.uid);
     }
     let p = await store.get(`profile:${u.uid}`);
@@ -1792,8 +2124,9 @@ export default function App() {
 
   const handleGuestAuth = async (u, isNew) => {
     const wasGuest = user?.isGuest;
+    const currentGuestUid = getOrCreateGuestUid();
     setUser(u);
-    if (wasGuest && u.uid !== "guest_user") {
+    if (wasGuest && u.uid !== currentGuestUid) {
       await migrateGuestData(u.uid);
     }
     setGuestAuthOpen(false);
@@ -2031,6 +2364,10 @@ ${ctxStr(pairs)}`;
     prefetchRef.current = {};
   };
 
+  if (window.location.pathname === "/auth/callback" || window.location.pathname === "/auth/callback/") {
+    return <OAuthCallback />;
+  }
+
   if (appState === "loading") return <div style={{ minHeight: "100vh", background: "#050505", display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ color: LIME, fontSize: "10px", letterSpacing: "4px", fontFamily: "monospace", fontWeight: "bold" }}>LOADING SYSTEM…</div></div>;
   if (appState === "auth") return <AuthScreen onAuth={handleAuth} />;
   if (appState === "onboarding") return <Onboarding user={user} onDone={handleOnboarding} />;
@@ -2219,48 +2556,48 @@ ${ctxStr(pairs)}`;
 
 
       {showAuthGateway && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 99991, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(8px)", padding: "1.5rem" }}>
-          <div style={{ width: "100%", maxWidth: "460px", background: "#080808", border: "1px solid rgba(200, 255, 0, 0.15)", borderRadius: "10px", padding: "2.2rem 2rem", position: "relative", boxShadow: "0 20px 50px rgba(0,0,0,0.8)" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 99991, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(8px)", padding: "1.5rem", fontFamily: "Inter, sans-serif" }}>
+          <div style={{ width: "100%", maxWidth: "460px", background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "10px", padding: "2.2rem 2rem", position: "relative", boxShadow: "0 20px 50px rgba(0,0,0,0.8)" }}>
             <button 
               onClick={() => setShowAuthGateway(false)} 
               style={{ 
                 position: "absolute", top: "1.5rem", right: "1.5rem", 
-                background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255, 255, 255, 0.1)", 
-                color: "#ffffff", borderRadius: "50%", width: "28px", height: "28px", 
+                background: "rgba(244, 239, 227, 0.04)", border: "1px solid #2E2A24", 
+                color: "#F4EFE3", borderRadius: "50%", width: "28px", height: "28px", 
                 cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", 
                 fontSize: "12px", transition: "all 0.15s" 
               }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = LIME; e.currentTarget.style.color = LIME; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#fff"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#2E2A24"; e.currentTarget.style.color = "#F4EFE3"; }}
             >
               ✕
             </button>
-            <span style={{ color: PURPLE, fontSize: "9px", textTransform: "uppercase", letterSpacing: "3px", fontWeight: "bold", display: "block", marginBottom: "0.5rem" }}>⚡️ PLATINUM EXECUTIVE UPGRADE</span>
-            <h2 style={{ color: "#ffffff", fontSize: "1.45rem", fontWeight: "900", margin: "0 0 0.8rem", letterSpacing: "1px", fontFamily: "monospace", lineHeight: "1.3" }}>Connect to Core Quantum Solvers</h2>
-            <p style={{ color: "rgba(255,255,255,0.65)", fontSize: "0.82rem", lineHeight: "1.6", fontFamily: "monospace", margin: "0 0 1.8rem" }}>
-              To activate unlimited ideation, access the <strong style={{ color: LIME }}>Co-founding Agility Suite</strong> (War Room, Pitch Deck, GIS Radar & COGS Runway), and protect your ideas forever in our encrypted Vault, complete a free 10-second registration.
+            <span style={{ color: PURPLE, fontSize: "9px", textTransform: "uppercase", letterSpacing: "3px", fontWeight: "bold", display: "block", marginBottom: "0.5rem", fontFamily: "monospace" }}>⚡️ SECURE CRYPTOGRAPHIC CLOUD VAULT</span>
+            <h2 style={{ color: "#F4EFE3", fontSize: "1.42rem", fontWeight: "900", margin: "0 0 0.8rem", letterSpacing: "0.5px", lineHeight: "1.3" }}>Activate Zero-Trust Startup Vault</h2>
+            <p style={{ color: "rgba(244,239,227,0.7)", fontSize: "0.82rem", lineHeight: "1.6", margin: "0 0 1.8rem" }}>
+              Unlock the complete <strong style={{ color: LIME }}>Co-founding Agility Suite</strong> (War Room, Pitch Deck, and COGS Runway), seamlessly synchronize your data securely to Supabase, and safeguard your startup formulas client-side inside an encrypted personal vault.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               <button 
                 onClick={() => setGuestAuthOpen(true)}
                 style={{ 
-                  background: LIME, color: "#000000", border: "none", borderRadius: "6px", 
+                  background: LIME, color: "#1B1815", border: "none", borderRadius: "6px", 
                   padding: "0.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", 
                   cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase", 
                   boxShadow: "0 4px 20px rgba(200, 255, 0, 0.2)" 
                 }}
               >
-                Create Infinite Free Account NOW →
+                Create Secure Free Account NOW →
               </button>
               <button 
                 onClick={() => setShowAuthGateway(false)}
                 style={{ 
-                  background: "transparent", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.5)", 
+                  background: "transparent", border: "1px solid #2E2A24", color: "rgba(244,239,227,0.6)", 
                   borderRadius: "6px", padding: "0.80rem", fontSize: "10px", fontWeight: "bold", 
                   cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase", transition: "all 0.15s" 
                 }}
-                onMouseEnter={e => { e.currentTarget.style.color = "#ffffff"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.4)"; }}
-                onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.5)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
+                onMouseEnter={e => { e.currentTarget.style.color = "#F4EFE3"; e.currentTarget.style.borderColor = "rgba(244, 239, 227, 0.4)"; }}
+                onMouseLeave={e => { e.currentTarget.style.color = "rgba(244,239,227,0.6)"; e.currentTarget.style.borderColor = "#2E2A24"; }}
               >
                 I Decline — Keep Exploring guest mode
               </button>
@@ -2270,11 +2607,11 @@ ${ctxStr(pairs)}`;
       )}
 
       {guestAuthOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100000, background: "#050505", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 100000, background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ position: "absolute", top: "2rem", right: "2rem", zIndex: 100001 }}>
             <button 
               onClick={() => setGuestAuthOpen(false)}
-              style={{ background: "rgba(255, 60, 120, 0.08)", border: "1px solid rgba(255, 60, 120, 0.3)", color: PINK, borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.8rem", fontWeight: "bold" }}
+              style={{ background: "rgba(92, 32, 38, 0.15)", border: "1px solid #5C2026", color: "#F4EFE3", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontFamily: "monospace", fontSize: "0.8rem", fontWeight: "bold" }}
             >
               ✕ Close & Explore Sandbox
             </button>
@@ -2372,7 +2709,7 @@ ${ctxStr(pairs)}`;
                     boxShadow: "0 0 12px rgba(200, 255, 0, 0.2)"
                   }}
                 >
-                  ⚡ UPGRADE ({3 - guestIgnitions.length} LEFT)
+                  ⚡ SECURE VAULT ({3 - guestIgnitions.length} LEFT)
                 </button>
               </>
             ) : (
