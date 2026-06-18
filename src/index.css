@@ -8,8 +8,22 @@
 }
 
 body {
-  background-color: #0F0D0B;
-  color: #F4EFE3;
-  font-family: "Inter", sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-base);
+  font-family: var(--font-sans);
+}
+
+:root {
+  --bg-base: #0F0D0B;
+  --bg-panel: #1A1815;
+  --text-base: #F4EFE3;
+  --text-muted: #8c8577;
+  --accent-gold-dark: #2a220f;
+  --accent-gold: #C8A24E;
+  --accent-gold-bright: #D4AF37;
+  --muted-sand: #B8AFA0;
+  --deep-emerald: #163C2E;
+  --crimson-oxblood: #5C2026;
+  --border-panel: #2E2A24;
 }
 

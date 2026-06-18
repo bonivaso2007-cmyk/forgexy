@@ -7,11 +7,11 @@ import { supabase, reinitializeSupabase } from "./lib/supabase";
 
 const API = "/api/ai-proxy";
 const Q_TARGET = 6;
-const GOLD = "#C8A24E"; // Sovereign Gilt
-const SAND = "#B8AFA0"; // Secondary Muted Sand/Silt
-const EMERALD = "#163C2E"; // Deep Emerald Green
-const OXBLOOD = "#5C2026"; // Crimson Oxblood
-const GOLD_BRIGHT = "#D4AF37"; // Bright Accent Gold
+const GOLD = "var(--accent-gold)"; // Sovereign Gilt
+const SAND = "var(--muted-sand)"; // Secondary Muted Sand/Silt
+const EMERALD = "var(--deep-emerald)"; // Deep Emerald Green
+const OXBLOOD = "var(--crimson-oxblood)"; // Crimson Oxblood
+const GOLD_BRIGHT = "var(--accent-gold-bright)"; // Bright Accent Gold
 const BRANCH_COLORS = ["#C8A24E", "#B8AFA0", "#D4AF37", "#9BA88F", "#E5DCC6"];
 
 // Legacy stylistic aliases for backward-compatible rendering safety across deep sub-systems:
@@ -585,21 +585,21 @@ function AuthScreen({ onAuth }) {
 
   const inp = { 
     width: "100%", 
-    background: "#1B1815", 
-    border: "1px solid #2E2A24", 
+    background: "var(--bg-panel)", 
+    border: "1px solid var(--border-panel)", 
     borderRadius: "6px", 
-    color: "#F4EFE3", 
+    color: "var(--text-base)", 
     fontSize: "0.85rem", 
     padding: "0.85rem 1rem", 
     outline: "none", 
-    fontFamily: "Inter, sans-serif", 
+    fontFamily: "var(--font-sans)", 
     boxSizing: "border-box" as const 
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "Inter, sans-serif" }}>
-      <div style={{ width: "100%", maxWidth: "420px", display: "flex", flexDirection: "column", alignItems: "center", background: "#1B1815", padding: "2.5rem 2rem", borderRadius: "12px", border: "1px solid #2E2A24", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
-        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "rgba(244,239,227,0.4)", marginBottom: "1.2rem", display: "block", textAlign: "center", fontFamily: "monospace" }}>Project Specification 2026</span>
+    <div style={{ minHeight: "100vh", background: "var(--bg-base)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "var(--font-sans)" }}>
+      <div style={{ width: "100%", maxWidth: "420px", display: "flex", flexDirection: "column", alignItems: "center", background: "var(--bg-panel)", padding: "2.5rem 2rem", borderRadius: "12px", border: "1px solid var(--border-panel)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
+        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "var(--text-muted)", marginBottom: "1.2rem", display: "block", textAlign: "center", fontFamily: "var(--font-mono)" }}>Project Specification 2026</span>
         
         {/* PREMIUM ROYAL LOGO CENTERPIECE */}
         <div style={{ 
@@ -609,8 +609,8 @@ function AuthScreen({ onAuth }) {
           width: "90px", 
           height: "90px", 
           borderRadius: "50%", 
-          background: "radial-gradient(circle, #2a220f 0%, #1b1815 100%)", 
-          border: "2px solid #D4AF37", 
+          background: "radial-gradient(circle, var(--accent-gold-dark) 0%, var(--bg-panel) 100%)", 
+          border: "2px solid var(--accent-gold-bright)", 
           boxShadow: "0 0 28px rgba(212, 175, 55, 0.45), inset 0 0 12px rgba(212, 175, 55, 0.3)", 
           padding: "5px",
           marginBottom: "1.2rem",
@@ -632,11 +632,11 @@ function AuthScreen({ onAuth }) {
         </div>
 
         <h1 style={{ color: LIME, fontSize: "2.7rem", fontWeight: "900", letterSpacing: "5px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "Inter, sans-serif", textAlign: "center" }}>FORGE</h1>
-        <p style={{ color: "#D4AF37", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 1.8rem", fontFamily: "monospace", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
+        <p style={{ color: "var(--accent-gold-bright)", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 1.8rem", fontFamily: "var(--font-mono)", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
 
-        <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.5rem", border: "1px solid #2E2A24", borderRadius: "6px", overflow: "hidden" }}>
+        <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.5rem", border: "1px solid var(--border-panel)", borderRadius: "6px", overflow: "hidden" }}>
           {["login", "signup"].map(m => (
-            <button key={m} onClick={() => { setMode(m); setErr(""); }} style={{ flex: 1, background: mode === m ? LIME : "transparent", color: mode === m ? "#1B1815" : "rgba(244,239,227,0.5)", border: "none", padding: "0.72rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase", transition: "all .2s" }}>{m}</button>
+            <button key={m} onClick={() => { setMode(m); setErr(""); }} style={{ flex: 1, background: mode === m ? LIME : "transparent", color: mode === m ? "var(--bg-panel)" : "var(--text-muted)", border: "none", padding: "0.72rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "var(--font-mono)", textTransform: "uppercase", transition: "all .2s" }}>{m}</button>
           ))}
         </div>
 
@@ -1241,13 +1241,13 @@ function ActionPlan({ data, onDeepDive }) {
   return (
     <div style={{ fontFamily: "monospace" }}>
       <h2 style={{ color: LIME, fontSize: "1.4rem", margin: "0 0 1.8rem", fontWeight: "900", letterSpacing: "1px" }}>{data.title}</h2>
-      {(data.weeks || []).map((w, i) => (
+      {Array.isArray(data?.weeks) && data.weeks.map((w, i) => (
         <div key={i} style={{ marginBottom: "1.8rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "0.6rem", paddingBottom: "0.4rem", borderBottom: `1px solid #1c1c1c` }}>
             <span style={{ color: LIME, fontWeight: "bold", fontSize: "0.78rem" }}>{w.week}</span>
             <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.68rem" }}>— {w.focus}</span>
           </div>
-          {(w.tasks || []).map((t, j) => { 
+          {Array.isArray(w?.tasks) && w.tasks.map((t, j) => { 
             const p = (t.priority || "MED").toUpperCase().slice(0, 3); 
             const c = pc[p] || "rgba(255,255,255,0.5)"; 
             const k = `${i}-${j}`; 
@@ -1301,7 +1301,7 @@ function SWOT({ data, onDeepDive }) {
         {quads.map(q => (
           <div key={q.key} style={{ background: "#090909", border: `1px solid #1c1c1c`, borderRadius: "6px", padding: "1rem" }}>
             <div style={{ color: q.color, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "3px", marginBottom: "0.65rem", fontWeight: "bold" }}>{q.icon} {q.label}</div>
-            {(data[q.key] || []).map((item, i) => (
+            {Array.isArray(data?.[q.key]) && data[q.key].map((item, i) => (
               <div key={i} style={{ display: "flex", width: "100%", gap: "0.5rem", marginBottom: "0.45rem", alignItems: "flex-start", flexWrap: "wrap" }}>
                 <span style={{ color: q.color, fontSize: "0.66rem", marginTop: "4px", flexShrink: 0 }}>◆</span>
                 <span style={{ color: "rgba(255,255,255,0.8)", fontSize: "0.79rem", lineHeight: "1.58", flex: 1 }}>{item}</span>
