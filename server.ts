@@ -229,9 +229,9 @@ async function startServer() {
 
   if (!hasDist) {
     // If running from dist/ server (e.g. dist/server.cjs) or different working directory
-    const altPath1 = __dirname;
-    const altPath2 = path.join(__dirname, "..");
-    const altPath3 = path.join(__dirname, "../dist");
+    const altPath1 = process.cwd();
+    const altPath2 = path.join(process.cwd(), "..");
+    const altPath3 = path.join(process.cwd(), "../dist");
     if (fs.existsSync(path.join(altPath1, "index.html"))) {
       distPath = altPath1;
       hasDist = true;

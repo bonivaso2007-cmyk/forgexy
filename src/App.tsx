@@ -1481,12 +1481,11 @@ const OUTPUTS = [
   { key: "promptpack", icon: "💻", label: "Prompt Pack", desc: "Cursor/Claude Setup & Prompts" },
 ];
 
-const Q_SYS = `You are FORGE — an elite, analytical, and ruthless startup advisor. Your mission is to ask exactly ONE deep, fully articulated, and thought-provoking question to help the founder pressure-test their venture and identify hidden assumptions.
-INSTRUCTIONS:
-1. Generate exactly one robust, comprehensive, and complete question.
-2. The question must be deeply customized to the founder's specific industry, stage, technical ability, location, and constraints.
-3. Keep the question complete, self-contained, grammatically finished, and ending with a question mark. It must NEVER end abruptly or be truncated in the middle of a sentence.
-4. Do NOT include any intro, casual greetings, chit-chat, preamble, or response suffix. Start immediately with the question text.`;
+const Q_SYS = `You are FORGE — an elite, analytical, herculean startup advisor.
+FORMAT MANDATE:
+1. Always start with a 2-word title prefixed with ** and suffixed with ** (e.g., **Critical Problem**, **Ideal Customer**, **Distribution Edge**, **Market Entry**, **Technical Barrier**).
+2. On the next line, ask exactly one short, hyper-focused, direct question of maximum 15-18 words.
+3. No preambles, intros, system/metric names, meta-talk, or fluff. Just the title and the punchy question. Make it ultra-easy to read.`;
 const ctxStr = pairs => pairs.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n");
 
 // ── SIGNATURE HALLMARK WAX SEAL ──────────────────────────
@@ -1642,7 +1641,7 @@ export default function App() {
   
   // EXPERIENCE LOG / FEEDBACK STATE MANAGEMENT
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [feedbackState, setFeedbackState] = useState({ rating: 0, text: "", features: [] as string[] });
+  const [feedbackState, setFeedbackState] = useState({ rating: 0, text: "", features: [] as string[], helpful: "" as "yes" | "no" | "" });
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackSuccess, setFeedbackSuccess] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(() => {
@@ -1654,12 +1653,13 @@ export default function App() {
   });
 
   const submitFeedback = async () => {
-    if (!feedbackState.text.trim() && feedbackState.rating === 0) return;
+    if (!feedbackState.helpful && !feedbackState.text.trim() && feedbackState.rating === 0) return;
     setFeedbackLoading(true);
     try {
       const feedbackObj = {
         id: `fd:${Date.now()}`,
-        rating: feedbackState.rating,
+        helpful: feedbackState.helpful,
+        rating: feedbackState.rating || (feedbackState.helpful === "yes" ? 5 : feedbackState.helpful === "no" ? 1 : 0),
         text: feedbackState.text,
         features: feedbackState.features,
         submittedAt: Date.now(),
@@ -1703,7 +1703,7 @@ export default function App() {
       setTimeout(() => {
         setShowFeedbackModal(false);
         setFeedbackSuccess(false);
-        setFeedbackState({ rating: 0, text: "", features: [] });
+        setFeedbackState({ rating: 0, text: "", features: [], helpful: "" });
       }, 2500);
     } catch (err) {
       console.error("Failed to submit feedback:", err);
@@ -2178,130 +2178,142 @@ ${ctxStr(pairs)}`;
 
       {showFeedbackModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(5px)", zIndex: 100005, display: "flex", alignItems: "center", justifyContent: "center", padding: "1.2rem" }}>
-          <div style={{ width: "100%", maxWidth: "480px", background: "#080808", border: `1px solid rgba(200, 255, 0, 0.25)`, borderRadius: "8px", padding: "1.8rem 1.6rem", display: "flex", flexDirection: "column", gap: "1.2rem", boxShadow: "0 20px 45px rgba(0,0,0,0.9)" }}>
+          <div style={{ width: "100%", maxWidth: "420px", background: "#080808", border: `1px solid rgba(200, 255, 0, 0.25)`, borderRadius: "8px", padding: "1.8rem 1.6rem", display: "flex", flexDirection: "column", gap: "1.2rem", boxShadow: "0 20px 45px rgba(0,0,0,0.9)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <span style={{ color: LIME, fontSize: "9px", fontWeight: "900", letterSpacing: "2.5px", fontFamily: "monospace" }}>ENGINE LOG</span>
-                <h3 style={{ color: "#ffffff", fontSize: "1.1rem", margin: "2px 0 0", fontFamily: "monospace", fontWeight: "900" }}>Submit Forge Feedback</h3>
+                <span style={{ color: LIME, fontSize: "9px", fontWeight: "900", letterSpacing: "2.5px", fontFamily: "monospace" }}>FEEDBACK</span>
+                <h3 style={{ color: "#ffffff", fontSize: "1.05rem", margin: "2px 0 0", fontFamily: "Inter, sans-serif", fontWeight: "700" }}>Help us refine FORGE</h3>
               </div>
               <button onClick={() => setShowFeedbackModal(false)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: "1.1rem", cursor: "pointer" }}>✕</button>
             </div>
 
-            <p style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.78rem", lineHeight: "1.45", margin: 0, fontFamily: "monospace" }}>
-              How has your experience been forging startup concepts? Rating & logs are retained in your secure local console database to shape future modules.
-            </p>
-
-            {/* Star feedback selection */}
-            <div>
-              <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>SATISFACTION INDEX</label>
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                {[1, 2, 3, 4, 5].map(num => (
+            {!feedbackState.helpful ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem", py: "0.5rem" }}>
+                <p style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.85rem", lineHeight: "1.5", margin: 0, fontFamily: "Inter, sans-serif" }}>
+                  Did FORGE help you evaluate or stress-test your startup concept?
+                </p>
+                <div style={{ display: "flex", gap: "0.75rem" }}>
                   <button 
-                    key={num}
-                    onClick={() => setFeedbackState(prev => ({ ...prev, rating: num }))}
+                    onClick={() => setFeedbackState(prev => ({ ...prev, helpful: "yes" }))}
                     style={{
                       flex: 1,
-                      background: feedbackState.rating >= num ? "rgba(200,255,0,0.12)" : "rgba(255,255,255,0.02)",
-                      border: `1px solid ${feedbackState.rating >= num ? LIME : "rgba(255,255,255,0.1)"}`,
-                      color: feedbackState.rating >= num ? LIME : "rgba(255,255,255,0.4)",
-                      padding: "0.48rem 0",
-                      fontSize: "11px",
-                      fontFamily: "monospace",
+                      background: "rgba(200,255,0,0.06)",
+                      border: `1px solid ${LIME}`,
+                      color: LIME,
+                      padding: "0.75rem",
+                      fontSize: "0.82rem",
+                      fontFamily: "Inter, sans-serif",
                       fontWeight: "bold",
-                      borderRadius: "4px",
-                      cursor: "pointer"
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "0.40rem",
+                      transition: "all 0.15s"
                     }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(200,255,0,0.12)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "rgba(200,255,0,0.06)"}
                   >
-                    {num} ★
+                    👍 YES
                   </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Multiselect what features they love */}
-            <div>
-              <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>MOST VALUABLE CORE ENGINES</label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
-                {["Idea Intake & Challenge", "Blueprint Generation", "SWOT Analysis", "Dev Roadmap", "Prompt Pack", "Business Plan", "Pitch Simulator", "Forge Intel", "Idea Vault"].map(feat => {
-                  const isSelected = feedbackState.features.includes(feat);
-                  return (
-                    <button
-                      key={feat}
-                      onClick={() => {
-                        setFeedbackState(prev => {
-                          const nextList = prev.features.includes(feat)
-                            ? prev.features.filter(f => f !== feat)
-                            : [...prev.features, feat];
-                          return { ...prev, features: nextList };
-                        });
-                      }}
-                      style={{
-                        background: isSelected ? "rgba(200,255,0,0.1)" : "rgba(255,255,255,0.02)",
-                        border: `1px solid ${isSelected ? LIME : "rgba(255,255,255,0.08)"}`,
-                        color: isSelected ? LIME : "rgba(255,255,255,0.5)",
-                        borderRadius: "4px",
-                        padding: "4px 8px",
-                        fontSize: "9px",
-                        fontFamily: "monospace",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {feat}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Text area for detailed remarks */}
-            <div>
-              <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>DETAILED FOUNDER LOGS / BUGS</label>
-              <textarea
-                value={feedbackState.text}
-                onChange={e => setFeedbackState(prev => ({ ...prev, text: e.target.value }))}
-                placeholder="What features did you find stellar? Share any friction, feature ideas, or software glitches detected..."
-                style={{
-                  width: "100%",
-                  height: "90px",
-                  background: "#050505",
-                  border: "1px solid #1c1c1c",
-                  borderRadius: "5px",
-                  color: "#ffffff",
-                  padding: "0.6rem 0.8rem",
-                  fontSize: "0.78rem",
-                  fontFamily: "monospace",
-                  lineHeight: "1.4",
-                  boxSizing: "border-box",
-                  resize: "none",
-                  outline: "none"
-                }}
-              />
-            </div>
-
-            {feedbackSuccess ? (
-              <div style={{ background: "rgba(200, 255, 0, 0.08)", border: `1px solid ${LIME}`, borderRadius: "4px", padding: "0.6rem 0.8rem", color: LIME, fontSize: "10px", fontFamily: "monospace", textAlign: "center", fontWeight: "bold" }}>
-                ✓ FEEDBACK SECURELY ARCHIVED. Thank you, founder!
+                  <button 
+                    onClick={() => setFeedbackState(prev => ({ ...prev, helpful: "no" }))}
+                    style={{
+                      flex: 1,
+                      background: "rgba(255,255,255,0.02)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      color: "rgba(255,255,255,0.7)",
+                      padding: "0.75rem",
+                      fontSize: "0.82rem",
+                      fontFamily: "Inter, sans-serif",
+                      fontWeight: "bold",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "0.40rem",
+                      transition: "all 0.15s"
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.06)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.02)"}
+                  >
+                    👎 NO
+                  </button>
+                </div>
               </div>
             ) : (
-              <button
-                onClick={submitFeedback}
-                disabled={feedbackLoading}
-                style={{
-                  width: "100%",
-                  background: feedbackState.text.trim() || feedbackState.rating > 0 ? LIME : "rgba(200, 255, 0, 0.15)",
-                  color: feedbackState.text.trim() || feedbackState.rating > 0 ? "#000" : "rgba(255, 255, 255, 0.2)",
-                  border: "none",
-                  borderRadius: "5px",
-                  padding: "0.65rem 0",
-                  fontSize: "11px",
-                  fontFamily: "monospace",
-                  fontWeight: "900",
-                  cursor: feedbackState.text.trim() || feedbackState.rating > 0 ? "pointer" : "not-allowed",
-                  transition: "all 0.2s"
-                }}
-              >
-                {feedbackLoading ? "TRANSMITTING TO SECURE CORE..." : "TRANSMIT EXPERIENCE LOG"}
-              </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <label style={{ display: "block", color: LIME, fontSize: "0.68rem", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1.5px", marginBottom: "0.4rem", fontWeight: "bold" }}>
+                    {feedbackState.helpful === "yes" ? "WHAT HELPED MOST?" : "WHAT FRUSTRATED YOU?"}
+                  </label>
+                  <textarea
+                    value={feedbackState.text}
+                    onChange={e => setFeedbackState(prev => ({ ...prev, text: e.target.value }))}
+                    placeholder={feedbackState.helpful === "yes" ? "What was the most useful advice or feature? Keep it short." : "What made it complex or annoying? Let us know."}
+                    style={{
+                      width: "100%",
+                      height: "100px",
+                      background: "#050505",
+                      border: "1px solid #1c1c1c",
+                      borderRadius: "5px",
+                      color: "#ffffff",
+                      padding: "0.6rem 0.8rem",
+                      fontSize: "0.78rem",
+                      fontFamily: "Inter, sans-serif",
+                      lineHeight: "1.4",
+                      boxSizing: "border-box",
+                      resize: "none",
+                      outline: "none"
+                    }}
+                    autoFocus
+                  />
+                </div>
+
+                {feedbackSuccess ? (
+                  <div style={{ background: "rgba(200, 255, 0, 0.08)", border: `1px solid ${LIME}`, borderRadius: "4px", padding: "0.6rem 0.8rem", color: LIME, fontSize: "10px", fontFamily: "monospace", textAlign: "center", fontWeight: "bold" }}>
+                    ✓ FEEDBACK ARCHIVED
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button 
+                      onClick={() => setFeedbackState(prev => ({ ...prev, helpful: "" }))}
+                      style={{
+                        padding: "0.6rem 1rem",
+                        background: "transparent",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        color: "rgba(255,255,255,0.4)",
+                        borderRadius: "5px",
+                        fontSize: "0.75rem",
+                        cursor: "pointer"
+                      }}
+                    >
+                      ← BACK
+                    </button>
+                    <button
+                      onClick={submitFeedback}
+                      disabled={feedbackLoading}
+                      style={{
+                        flex: 1,
+                        background: LIME,
+                        color: "#000",
+                        border: "none",
+                        borderRadius: "5px",
+                        padding: "0.65rem 0",
+                        fontSize: "11px",
+                        fontFamily: "monospace",
+                        fontWeight: "900",
+                        cursor: "pointer",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      {feedbackLoading ? "TRANSMITTING..." : "SUBMIT FEEDBACK"}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -2546,17 +2558,38 @@ ${ctxStr(pairs)}`;
             <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "1px", marginBottom: "2rem", fontFamily: "monospace" }}>{qa.length}/{Q_TARGET} QUESTIONS COMPLETED</div>
             {loading ? (
               <div style={{ padding: "2.5rem 0" }}><span style={{ color: PURPLE, fontSize: "0.75rem", letterSpacing: "2.5px", fontFamily: "monospace", fontWeight: "bold" }}>THINKING</span>{[0, 1, 2, 3].map(i => <span key={i} style={{ color: PURPLE, animation: `pulse 1.5s ease ${i * .25}s infinite` }}>.</span>)}</div>
-            ) : (<>
-              <p style={{ color: "#ffffff", fontSize: "1.25rem", lineHeight: "1.75", margin: "0 0 1.9rem", fontFamily: "monospace", fontWeight: "bold" }}>{curQ}</p>
-              <p style={G.label}>Your answer</p>
-              <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
-              <div style={{ display: "flex", gap: "0.7rem", marginTop: "0.85rem", alignItems: "center" }}>
-                {qa.length > 0 && <button className="gh" style={G.ghost} onClick={backQ}>← BACK</button>}
-                <button style={{ ...G.btn, opacity: !curA.trim() ? 0.2 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH →" : "NEXT →"}</button>
-                {qa.length >= 3 && <button className="gh" style={G.ghost} onClick={() => { scoreIdea(qa); setPhase("reality-check"); }}>skip →</button>}
-              </div>
-              {err && <div style={G.err}>{err}</div>}
-            </>)}
+            ) : (() => {
+              const lines = (curQ || "").split("\n").map(l => l.trim()).filter(Boolean);
+              let subtitle = `STRESS TEST ${qa.length + 1}`;
+              let body = curQ;
+              if (lines.length >= 2 && lines[0].startsWith("**") && lines[0].endsWith("**")) {
+                subtitle = lines[0].replace(/\*\*/g, "");
+                body = lines.slice(1).join("\n");
+              } else if (lines.length >= 1 && lines[0].startsWith("**") && lines[0].endsWith("**")) {
+                subtitle = lines[0].replace(/\*\*/g, "");
+                body = lines.slice(1).join("\n") || lines[0].replace(/\*\*/g, "");
+              }
+              return (
+                <>
+                  <div style={{ marginBottom: "1.9rem" }}>
+                    <div style={{ color: LIME, fontSize: "0.72rem", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "2px", marginBottom: "0.5rem", fontWeight: "900" }}>
+                      {subtitle}
+                    </div>
+                    <p style={{ color: "#ffffff", fontSize: "1.15rem", lineHeight: "1.52", margin: 0, fontFamily: "Inter, sans-serif", fontWeight: "600", letterSpacing: "-0.01em" }}>
+                      {body}
+                    </p>
+                  </div>
+                  <p style={G.label}>Your answer</p>
+                  <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
+                  <div style={{ display: "flex", gap: "0.7rem", marginTop: "0.85rem", alignItems: "center" }}>
+                    {qa.length > 0 && <button className="gh" style={G.ghost} onClick={backQ}>← BACK</button>}
+                    <button style={{ ...G.btn, opacity: !curA.trim() ? 0.2 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH →" : "NEXT →"}</button>
+                    {qa.length >= 3 && <button className="gh" style={G.ghost} onClick={() => { scoreIdea(qa); setPhase("reality-check"); }}>skip →</button>}
+                  </div>
+                  {err && <div style={G.err}>{err}</div>}
+                </>
+              );
+            })()}
           </div>
         )}
 
