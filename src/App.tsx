@@ -663,24 +663,14 @@ function AuthScreen({ onAuth }) {
 // ── ONBOARDING ────────────────────────────────────────────
 function Onboarding({ user, onDone }) {
   const steps = [
-    { key: "age", label: "What is your age?", placeholder: "e.g. 25, 32", type: "input" },
-    { key: "city", label: "Which city are you operating from?", placeholder: "e.g. Dar es Salaam, Nairobi, San Francisco", type: "input" },
     { key: "country", label: "What country is your startup based in?", placeholder: "e.g. Tanzania, India, United States", type: "input" },
-    { key: "industry", label: "What is your industry focus?", placeholder: "e.g. FinTech, Artificial Intelligence, AgTech", type: "input" },
-    { key: "market", label: "What is your Target Market size / scope?", placeholder: "e.g. East African mobile users, Global developers, US small businesses", type: "input" },
-    { key: "targetCustomer", label: "Who is your Ideal First Customer?", placeholder: "e.g. developers & builders, college students, small businesses", type: "input" },
-    { key: "stage", label: "What stage is your venture at?", type: "choice", options: ["Idea Phase", "Research phase", "Building MVP", "Have early users", "Revenue stage"] },
-    { key: "techLevel", label: "What is your level of technical execution?", type: "choice", options: ["Non-technical", "Intermediate", "Advanced developer"] },
-    { key: "funding", label: "How is your company currently funded?", type: "choice", options: ["Self-funded", "Pre-seed angel", "Venture backed", "Bootstrap (revenue)"] },
-    { key: "constraints", label: "What are your primary constraints?", type: "choice", options: ["Time-limited", "Budget-constrained", "No tech team", "Highly regulated market"] },
-    { key: "bio", label: "Could you summarize your founder bio & vision?", placeholder: "e.g. Dedicated developer building zero-trust cryptographic rails.", type: "textarea" },
+    { key: "stage", label: "What stage is your venture at?", type: "choice", options: ["Just an idea", "Research phase", "Building MVP", "Have early users", "Revenue stage"] },
+    { key: "techLevel", label: "What is your level of technical execution?", type: "choice", options: ["Non-technical", "Basic (vibe coder)", "Intermediate", "Advanced developer"] },
   ];
 
   const [step, setStep] = useState(0);
   const [data, setData] = useState({ 
-    age: "", city: "", country: "", industry: "", market: "", 
-    targetCustomer: "", stage: "Idea Phase", techLevel: "Intermediate", 
-    funding: "Self-funded", constraints: "Time-limited", bio: "" 
+    country: "", stage: "Just an idea", techLevel: "Intermediate" 
   });
   const [val, setVal] = useState("");
   const [loading, setLoading] = useState(false);
@@ -697,17 +687,10 @@ function Onboarding({ user, onDone }) {
       name: user.name || "Founder",
       email: user.email || "",
       uid: user.uid,
-      age: "Not specified",
-      city: "Not specified",
       country: "Global",
-      industry: "Not specified",
-      market: "Not specified",
-      targetCustomer: "Not specified",
-      stage: "Idea Phase",
+      stage: "Just an idea",
       techLevel: "Intermediate",
-      funding: "Self-funded",
-      constraints: "Time-limited",
-      bio: "Fictional founder exploring innovative startup concepts.",
+      bio: "Founder exploring startup concepts.",
       incomplete: false,
       completedAt: Date.now()
     };
@@ -802,11 +785,10 @@ function ProfilePanel({ profile, user, onUpdate, onLogout, onClose, onOpenFeedba
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ ...profile });
   const fields = [
-    { key: "age", label: "Age" }, { key: "city", label: "City" }, { key: "country", label: "Country" },
-    { key: "industry", label: "Industry" }, { key: "market", label: "Target Market" },
-    { key: "targetCustomer", label: "Ideal First Customer" }, { key: "stage", label: "Stage" },
-    { key: "techLevel", label: "Technical Level" }, { key: "funding", label: "Funding" },
-    { key: "constraints", label: "Constraints" }, { key: "bio", label: "Founder Bio" },
+    { key: "country", label: "Country" },
+    { key: "stage", label: "Stage" },
+    { key: "techLevel", label: "Technical Level" },
+    { key: "bio", label: "Founder Bio" },
   ];
 
   const save = async () => {
