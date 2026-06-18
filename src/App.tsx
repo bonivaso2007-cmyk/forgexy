@@ -278,29 +278,40 @@ const store = {
   },
   async list(prefix: string) {
     try {
-      // First try to list keys from Supabase if we can
+      let combinedKeys: string[] = [];
+      
+      // Local keys first
+      if (typeof window !== "undefined" && window.localStorage) {
+        const keys = Object.keys(localStorage);
+        combinedKeys = keys.filter((k) => k.startsWith(prefix));
+      }
+      
+      // AIS window storage key list
+      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.list) {
+        try {
+          const r = await (window as any).storage.list(prefix);
+          if (r?.keys) {
+            combinedKeys = Array.from(new Set([...combinedKeys, ...r.keys]));
+          }
+        } catch {}
+      }
+
+      // Supabase keys
       if (supabase && prefix.startsWith("idea:")) {
         try {
           const parts = prefix.split(":");
           const uid = parts[1];
           const { data, error } = await supabase.from('vault_ideas').select('id').eq('user_uid', uid);
           if (!error && data) {
-            return data.map(d => `idea:${uid}:${d.id}`);
+            const dbKeys = data.map(d => `idea:${uid}:${d.id}`);
+            combinedKeys = Array.from(new Set([...combinedKeys, ...dbKeys]));
           }
         } catch (dbErr) {
-          console.warn("Supabase list error, falling back to local list:", dbErr);
+          console.warn("Supabase list error skipped:", dbErr);
         }
       }
 
-      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.list) {
-        const r = await (window as any).storage.list(prefix);
-        return r?.keys || [];
-      }
-      if (typeof window !== "undefined" && window.localStorage) {
-        const keys = Object.keys(localStorage);
-        return keys.filter((k) => k.startsWith(prefix));
-      }
-      return [];
+      return combinedKeys;
     } catch {
       return [];
     }
