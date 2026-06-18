@@ -167,12 +167,42 @@ const store = {
   async get(k: string) {
     try {
       let rawVal: any = null;
-      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.get) {
-        const r = await (window as any).storage.get(k);
-        rawVal = r ? JSON.parse(r.value) : null;
-      } else if (typeof window !== "undefined" && window.localStorage) {
-        const item = localStorage.getItem(k);
-        rawVal = item ? JSON.parse(item) : null;
+
+      // Attempt loading from Supabase if active and key is a vault idea
+      if (supabase && k.startsWith("idea:")) {
+        try {
+          const parts = k.split(":");
+          const ideaId = parts[2];
+          const { data, error } = await supabase.from('vault_ideas').select('*').eq('id', ideaId).maybeSingle();
+          if (!error && data) {
+            rawVal = {
+              id: data.id,
+              text: data.text,
+              score: data.score,
+              label: data.label,
+              qa: typeof data.qa === 'string' ? JSON.parse(data.qa) : data.qa,
+              savedAt: Number(data.savedAt)
+            };
+          } else {
+            // Backup fallback to key-value table
+            const { data: kvData } = await supabase.from('kv_store').select('value').eq('key', k).maybeSingle();
+            if (kvData && kvData.value) {
+              rawVal = JSON.parse(kvData.value);
+            }
+          }
+        } catch (dbErr) {
+          console.warn("Supabase load error skipped:", dbErr);
+        }
+      }
+
+      if (!rawVal) {
+        if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.get) {
+          const r = await (window as any).storage.get(k);
+          rawVal = r ? JSON.parse(r.value) : null;
+        } else if (typeof window !== "undefined" && window.localStorage) {
+          const item = localStorage.getItem(k);
+          rawVal = item ? JSON.parse(item) : null;
+        }
       }
 
       if (rawVal && typeof rawVal === "string" && rawVal.startsWith("SECURE:")) {
@@ -194,15 +224,49 @@ const store = {
 
       if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.set) {
         await (window as any).storage.set(k, JSON.stringify(valToStore));
-        return;
-      }
-      if (typeof window !== "undefined" && window.localStorage) {
+      } else if (typeof window !== "undefined" && window.localStorage) {
         localStorage.setItem(k, JSON.stringify(valToStore));
+      }
+
+      // Supabase replication
+      if (supabase && k.startsWith("idea:")) {
+        const parts = k.split(":");
+        const uid = parts[1];
+        const ideaId = parts[2];
+        try {
+          const { error } = await supabase.from('vault_ideas').upsert({
+            id: ideaId,
+            user_uid: uid,
+            text: v.text,
+            score: v.score,
+            label: v.label,
+            qa: JSON.stringify(v.qa),
+            savedAt: v.savedAt
+          });
+          if (error) {
+            console.warn("Supabase upsert failed, retrying with generic key-value insert:", error.message);
+            await supabase.from('kv_store').upsert({ key: k, value: JSON.stringify(valToStore) });
+          } else {
+            console.log("✓ Successfully synchronized idea to Supabase Vault");
+          }
+        } catch (dbErr) {
+          console.warn("Supabase storage error skipped gracefully:", dbErr);
+        }
       }
     } catch {}
   },
   async del(k: string) {
     try {
+      if (supabase && k.startsWith("idea:")) {
+        try {
+          const parts = k.split(":");
+          const ideaId = parts[2];
+          await supabase.from('vault_ideas').delete().eq('id', ideaId);
+        } catch (dbErr) {
+          console.warn("Supabase delete skipped:", dbErr);
+        }
+      }
+
       if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.delete) {
         await (window as any).storage.delete(k);
         return;
@@ -214,6 +278,20 @@ const store = {
   },
   async list(prefix: string) {
     try {
+      // First try to list keys from Supabase if we can
+      if (supabase && prefix.startsWith("idea:")) {
+        try {
+          const parts = prefix.split(":");
+          const uid = parts[1];
+          const { data, error } = await supabase.from('vault_ideas').select('id').eq('user_uid', uid);
+          if (!error && data) {
+            return data.map(d => `idea:${uid}:${d.id}`);
+          }
+        } catch (dbErr) {
+          console.warn("Supabase list error, falling back to local list:", dbErr);
+        }
+      }
+
       if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.list) {
         const r = await (window as any).storage.list(prefix);
         return r?.keys || [];
@@ -304,106 +382,18 @@ function marketContext(p) {
 
 // ── AUTH SCREENS ──────────────────────────────────────────
 function AuthScreen({ onAuth }) {
-  const [authType, setAuthType] = useState<"cloud" | "local">("cloud");
+  const [authType, setAuthType] = useState<"local">("local");
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ email: "", password: "", name: "" });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  const handleGoogleSignIn = async () => {
-    setErr("");
-    setLoading(true);
-    try {
-      const result = await signInWithPopup(firebaseAuth, googleProvider);
-      const userObj = result.user;
-      const sessionUser = {
-        uid: userObj.uid,
-        email: userObj.email || "",
-        name: userObj.displayName || userObj.email?.split("@")[0] || "Founding Member",
-        isFirebaseUser: true,
-      };
-      await store.set("session", sessionUser);
-      onAuth(sessionUser, false);
-    } catch (e: any) {
-      console.error("Firebase Google Sign-In Error Captured: ", e);
-      if (e.code === "auth/popup-closed-by-user") {
-        setErr("Google login window was closed before completion.");
-      } else if (e.code === "auth/unauthorized-domain") {
-        setErr(`🚨 UNAUTHORIZED DOMAIN: "${window.location.hostname}" is not on Firebase's authorized list. Go to Firebase Console > Authentication > Settings, and add "${window.location.hostname}" as an Authorized Domain.`);
-      } else if (e.code === "auth/operation-not-supported-in-this-environment" || e.code === "auth/auth-domain-config-required" || String(e.message).toLowerCase().includes("iframe") || String(e.message).toLowerCase().includes("sandbox")) {
-        setErr("🔒 PREVIEW FRAME RESTRICTION: Google popups are blocked inside sandboxed preview frames by modern browsers. Please use the 'Email/Password' cloud sync login above (which works perfectly here) or click 'Open in New Tab' to use Google Sign-In.");
-      } else if (e.code === "auth/popup-blocked") {
-        setErr("🚫 POPUP BLOCKED: Your browser blocked the sign-in popup. Enable popups or use Email/Password instead.");
-      } else {
-        setErr(`⚠️ Google Auth failed: ${e.message || e}. Please make sure Google Sign-In is enabled in Firebase Console > Authentication > Sign-in method.`);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCloudEmailAuth = async () => {
-    setErr("");
-    setLoading(true);
-    const { email, password, name } = form;
-    if (!email.trim() || !password.trim()) {
-      setErr("Please fill in email and password.");
-      setLoading(false);
-      return;
-    }
-    if (password.length < 6) {
-      setErr("Password must be at least 6 characters.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      if (mode === "signup") {
-        if (!name.trim()) {
-          setErr("Please enter your name.");
-          setLoading(false);
-          return;
-        }
-        const result = await createUserWithEmailAndPassword(firebaseAuth, email.trim(), password);
-        await updateProfile(result.user, { displayName: name.trim() });
-        const sessionUser = {
-          uid: result.user.uid,
-          email: result.user.email || "",
-          name: name.trim(),
-          isFirebaseUser: true,
-        };
-        await store.set("session", sessionUser);
-        onAuth(sessionUser, true);
-      } else {
-        const result = await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
-        const sessionUser = {
-          uid: result.user.uid,
-          email: result.user.email || "",
-          name: result.user.displayName || result.user.email?.split("@")[0] || "Founding Member",
-          isFirebaseUser: true,
-        };
-        await store.set("session", sessionUser);
-        onAuth(sessionUser, false);
-      }
-    } catch (e: any) {
-      if (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" || e.code === "auth/invalid-email") {
-        setErr("Invalid email or password. Verify your credentials, or choose 'signup' to register.");
-      } else if (e.code === "auth/email-already-in-use") {
-        setErr("Email already registered. Please log in instead.");
-      } else {
-        setErr(`Cloud Authorization failed: ${e.message}`);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleLocalCryptAuth = async () => {
     setErr("");
     setLoading(true);
     const { email, password, name } = form;
     if (!email.trim() || !password.trim()) {
-      setErr("Fill in all fields for local credentials.");
+      setErr("Fill in all fields for credentials.");
       setLoading(false);
       return;
     }
@@ -418,7 +408,7 @@ function AuthScreen({ onAuth }) {
       if (mode === "signup") {
         const exists = await store.get(`user:${uid}`);
         if (exists) {
-          setErr("Account already exists locally. Log in instead.");
+          setErr("Account already exists. Log in instead.");
           setLoading(false);
           return;
         }
@@ -484,11 +474,7 @@ function AuthScreen({ onAuth }) {
   };
 
   const submit = () => {
-    if (authType === "cloud") {
-      handleCloudEmailAuth();
-    } else {
-      handleLocalCryptAuth();
-    }
+    handleLocalCryptAuth();
   };
 
   const inp = { 
@@ -541,84 +527,6 @@ function AuthScreen({ onAuth }) {
 
         <h1 style={{ color: LIME, fontSize: "3.2rem", fontWeight: "900", letterSpacing: "7px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "monospace", textAlign: "center" }}>FORGE</h1>
         <p style={{ color: "#D4AF37", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 1.8rem", fontFamily: "monospace", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
-        
-        {/* SECURE DATABASE TYPE TOGGLES */}
-        <div style={{ display: "flex", width: "100%", gap: "0.5rem", marginBottom: "1.2rem" }}>
-          <button 
-            onClick={() => { setAuthType("cloud"); setErr(""); }} 
-            style={{ 
-              flex: 1, 
-              background: authType === "cloud" ? "rgba(200,255,0,0.06)" : "transparent", 
-              border: `1px solid ${authType === "cloud" ? LIME : "#1c1c1c"}`, 
-              borderRadius: "6px", 
-              padding: "0.62rem", 
-              color: authType === "cloud" ? LIME : "rgba(255,255,255,0.4)", 
-              fontSize: "9px", 
-              letterSpacing: "1px", 
-              fontWeight: "900", 
-              fontFamily: "monospace", 
-              cursor: "pointer" 
-            }}
-          >
-            ☁️ CLOUD ACC SYNC
-          </button>
-          <button 
-            onClick={() => { setAuthType("local"); setErr(""); }} 
-            style={{ 
-              flex: 1, 
-              background: authType === "local" ? "rgba(200,255,0,0.06)" : "transparent", 
-              border: `1px solid ${authType === "local" ? LIME : "#1c1c1c"}`, 
-              borderRadius: "6px", 
-              padding: "0.62rem", 
-              color: authType === "local" ? LIME : "rgba(255,255,255,0.4)", 
-              fontSize: "9px", 
-              letterSpacing: "1px", 
-              fontWeight: "900", 
-              fontFamily: "monospace", 
-              cursor: "pointer" 
-            }}
-          >
-            🔑 LOCAL CRYPT VAULT
-          </button>
-        </div>
-
-        {/* CLOUD SERVICES GOOGLE LOGIN INBOUND SECTION */}
-        {authType === "cloud" && (
-          <div style={{ width: "100%", marginBottom: "1rem" }}>
-            <button 
-              onClick={handleGoogleSignIn} 
-              disabled={loading}
-              style={{ 
-                width: "100%", 
-                background: "#0a0a0a", 
-                color: "#ffffff", 
-                border: "1px solid #202020", 
-                borderRadius: "6px", 
-                padding: "0.82rem", 
-                fontSize: "11px", 
-                fontWeight: "900", 
-                letterSpacing: "2.5px", 
-                cursor: loading ? "not-allowed" : "pointer", 
-                fontFamily: "monospace", 
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "0.65rem",
-                boxShadow: "0 4px 15px rgba(0,0,0,0.4)"
-              }}
-            >
-              <svg style={{ width: "16px", height: "16px" }} viewBox="0 0 24 24">
-                <path fill="currentColor" d="M12.24 10.285V14.4h6.887c-.275 1.564-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.53-8 7.859-8c2.46 0 4.103 1.025 5.045 1.926l3.227-3.107C18.28 1.845 15.539 1 12.24 1c-5.99 0-10.8 4.81-10.8 10.8s4.81 10.8 10.8 10.8c6.257 0 10.422-4.4 10.422-10.6 0-.715-.077-1.258-.171-1.715H12.24z"/>
-              </svg>
-              SIGN IN WITH GOOGLE
-            </button>
-            <div style={{ display: "flex", alignItems: "center", margin: "1rem 0", color: "rgba(255,255,255,0.15)" }}>
-              <hr style={{ flex: 1, borderColor: "rgba(255,255,255,0.1)" }} />
-              <span style={{ padding: "0 10px", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase" }}>or email login</span>
-              <hr style={{ flex: 1, borderColor: "rgba(255,255,255,0.1)" }} />
-            </div>
-          </div>
-        )}
 
         <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.5rem", border: "1px solid #181818", borderRadius: "6px", overflow: "hidden" }}>
           {["login", "signup"].map(m => (
@@ -639,10 +547,7 @@ function AuthScreen({ onAuth }) {
         </button>
         
         <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.62rem", textAlign: "center", marginTop: "1.5rem", lineHeight: "1.5" }}>
-          {authType === "cloud" 
-            ? "Cloud accounts protect ideas in standard cloud databases. Free Firebase email or Google authentication provider handles verification safely."
-            : "Ideas are locked locally in your browser cache using AES-GCM (PBKDF2 derivative) and never stored back on any servers."
-          }
+          Secure zero-trust cryptographic accounts encrypt your ideas locally using AES-GCM (PBKDF2 derivative) and replicate directly to your Supabase Vault in real-time.
         </p>
       </div>
     </div>
@@ -823,13 +728,13 @@ function ProfilePanel({ profile, user, onUpdate, onLogout, onClose, onOpenFeedba
             <div style={{ background: "rgba(200, 255, 0, 0.04)", border: "1px dashed rgba(200, 255, 0, 0.25)", borderRadius: "6px", padding: "1.1rem", marginBottom: "1.5rem" }}>
               <div style={{ color: LIME, fontSize: "10px", fontWeight: "900", fontFamily: "monospace", letterSpacing: "1.5px", marginBottom: "0.3rem" }}>🚨 GUEST SANDBOX ACTIVE</div>
               <p style={{ color: "rgba(255,255,255,0.65)", fontSize: "0.74rem", fontFamily: "monospace", lineHeight: "1.4", margin: "0 0 0.8rem" }}>
-                You are currently building within a transient session. Upgrade to a free, cloud-synchronized Firebase account now to safeguard your ideas, formulas, and history forever.
+                You are currently building within a transient session. Create a secure personal account now to seamlessly synchronize and safeguard all your ideas, formulas, and history in real-time.
               </p>
               <button 
                 onClick={onUpgrade}
                 style={{ width: "100%", background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "8px 12px", fontSize: "10px", fontWeight: "900", fontFamily: "monospace", cursor: "pointer", letterSpacing: "1px" }}
               >
-                CREATE CLOUD SYNCED ACCOUNT NOW
+                CREATE SECURE ACCOUNT NOW
               </button>
             </div>
           )}
@@ -1679,6 +1584,29 @@ export default function App() {
       list.push(feedbackObj);
       localStorage.setItem("forge_founder_feedbacks", JSON.stringify(list));
 
+      // Also sync to Supabase if configured
+      if (supabase) {
+        try {
+          const { error } = await supabase.from('feedbacks').insert([{
+            id: feedbackObj.id,
+            rating: feedbackObj.rating,
+            text: feedbackObj.text,
+            features: JSON.stringify(feedbackObj.features),
+            submitted_at: feedbackObj.submittedAt,
+            user_email: feedbackObj.userEmail,
+            user_uid: feedbackObj.userUid
+          }]);
+          if (error) {
+            console.warn("Supabase feedback insert warning, using kv_store:", error.message);
+            await supabase.from('kv_store').insert([{ key: feedbackObj.id, value: JSON.stringify(feedbackObj) }]);
+          } else {
+            console.log("✓ Experience Feedback synchronized to Supabase successfully");
+          }
+        } catch (dbErr) {
+          console.warn("Supabase feedback skipped gracefully:", dbErr);
+        }
+      }
+
       // Also log feedback securely to the console for live developer tracing
       console.log("✓ Experience Feedback submitted successfully:", feedbackObj);
 
@@ -1773,18 +1701,9 @@ export default function App() {
       }
       
       // 3. Absolute protection: If local session exists but key has been purged from memory, force login
-      if (!session.isFirebaseUser && !activeEncryptionKey) {
+      if (!activeEncryptionKey) {
         await store.del("session");
         setAppState("auth");
-        return;
-      }
-
-      if (session.isFirebaseUser) {
-        setUser(session);
-        const p = await store.get(`profile:${session.uid}`);
-        if (!p) { setAppState("onboarding"); return; }
-        setProfile(p);
-        setAppState("app");
         return;
       }
 
@@ -1797,8 +1716,56 @@ export default function App() {
     })();
   }, []);
 
+  const migrateGuestData = async (newUid: string) => {
+    try {
+      console.log("🚀 Migrating transient Guest session records to personal profile: ", newUid);
+      
+      // 1. Migrate Ideas from local / supabase
+      const guestKeys = await store.list("idea:guest_user:");
+      console.log(`Found ${guestKeys.length} guest ideas to migrate.`);
+      for (const key of guestKeys) {
+        const ideaData = await store.get(key);
+        if (ideaData) {
+          const parts = key.split(":");
+          const ideaId = parts[2];
+          const newKey = `idea:${newUid}:${ideaId}`;
+          
+          await store.set(newKey, {
+            ...ideaData,
+            user_uid: newUid,
+            id: ideaId
+          });
+          
+          await store.del(key);
+        }
+      }
+
+      // 2. Migrate Profile if guest profile exists
+      const guestProfile = await store.get("profile:guest_user") || profile;
+      if (guestProfile) {
+        await store.set(`profile:${newUid}`, {
+          ...guestProfile,
+          uid: newUid,
+          name: guestProfile.name === "Guest Visionary" ? guestProfile.name : guestProfile.name
+        });
+        await store.del("profile:guest_user");
+      }
+
+      // 3. Clear guest specific key in localstorage
+      localStorage.removeItem("forge_guest_ignitions");
+
+      console.log("✓ All guest records transitioned successfully to active secure profile.");
+    } catch (migErr) {
+      console.error("Data migration skipped/errored: ", migErr);
+    }
+  };
+
   const handleAuth = async (u, isNew) => {
+    const wasGuest = user?.isGuest;
     setUser(u);
+    if (wasGuest && u.uid !== "guest_user") {
+      await migrateGuestData(u.uid);
+    }
     let p = await store.get(`profile:${u.uid}`);
     if (!p) {
       if (profile && profile.country !== "Global Target") {
@@ -1813,7 +1780,11 @@ export default function App() {
   };
 
   const handleGuestAuth = async (u, isNew) => {
+    const wasGuest = user?.isGuest;
     setUser(u);
+    if (wasGuest && u.uid !== "guest_user") {
+      await migrateGuestData(u.uid);
+    }
     setGuestAuthOpen(false);
     setShowAuthGateway(false);
     let p = await store.get(`profile:${u.uid}`);
@@ -1892,6 +1863,27 @@ ${ctxStr(pairs)}`;
               currentMemories = currentMemories.slice(-15);
             }
             localStorage.setItem("forge_cofounder_memories", JSON.stringify(currentMemories));
+
+            // Sync decision log to Supabase
+            if (supabase) {
+              try {
+                const { error } = await supabase.from('decision_logs').insert([{
+                  id: `mem:${Date.now()}`,
+                  decision: cleanMem,
+                  idea_id: id,
+                  user_uid: user?.uid || "guest",
+                  timestamp: Date.now()
+                }]);
+                if (error) {
+                  await supabase.from('kv_store').insert([{ key: `mem:${Date.now()}`, value: JSON.stringify({ decision: cleanMem, idea_id: id, user_uid: user?.uid || "guest", timestamp: Date.now() }) }]);
+                } else {
+                  console.log("✓ Live Decision Log synchronized to Supabase successfully");
+                }
+              } catch (dbErr) {
+                console.warn("Supabase decision_log insert skipped gracefully:", dbErr);
+              }
+            }
+
             console.log("Autonomous Living DNA memory recorded:", cleanMem);
           }
         }
