@@ -3,7 +3,6 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { WebSocketServer, WebSocket } from "ws";
 import fs from "fs";
 
 dotenv.config();
@@ -42,38 +41,6 @@ async function startServer() {
 
   // Zero-dependency sliding-window Client API Rate Limiter
   const aiRequestTracker = new Map<string, { count: number; resetTime: number }>();
-
-  // API Route: Secure GEO Competitor Intelligence (Google Maps / Places simulation or Grounded AI)
-  app.post("/api/market-places", async (req, res) => {
-    const { city, niche } = req.body;
-    if (!city || !niche) {
-      return res.status(400).json({ error: "Missing parameters." });
-    }
-    try {
-      if (!apiKey) {
-        return res.status(500).json({ error: "AI provider not configured. Contact support." });
-      }
-
-      const sys = `Generate accurate or highly relevant competitor map data for a startup pitch mapping competitors in ${city} for the niche: "${niche}". Return ONLY a valid JSON object matching this schema:
-      {
-        "center": {"lat": number, "lng": number},
-        "results": [
-          {"id": "string", "name": "string", "lat": number, "lng": number, "description": "1 sentence description", "vulnerability": "1 key weakness", "strength": "1 key strength", "traffic": "High" | "Medium" | "Low"}
-        ]
-      }`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Locate 4-6 competitors in or near ${city} offering "${niche}". Place their coordinates closely clustered around the center coordinates of ${city}. Return JSON only.`,
-        config: { systemInstruction: sys, temperature: 0.2, responseMimeType: "application/json" }
-      });
-      const responseText = response.text || "";
-      const cleanJson = responseText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      res.json(JSON.parse(cleanJson));
-    } catch (error: any) {
-      console.error("Market places intelligence resolution failed:", error);
-      res.status(500).json({ error: "Could not fetch geo-market indices." });
-    }
-  });
 
   // API Route: Secure AI Streaming Proxy with rigorous multi-layer defenses
   app.use("/api/ai-proxy", (req, res, next) => {
@@ -327,106 +294,9 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`[FORGE SERVER] Running at http://localhost:${PORT}`);
   });
-
-  // Zero-dependency native WebSocket collaboration registry
-  const wss = new WebSocketServer({ server });
-
-  interface WSMessage {
-    type: string;
-    room?: string;
-    name?: string;
-    role?: string;
-    text?: string;
-    points?: any;
-    x?: number;
-    y?: number;
-    swot?: any;
-    blueprint?: any;
-  }
-
-  // Store active rooms and their client sockets
-  const activeRooms = new Map<string, Set<WebSocket>>();
-  // Track meta information of connected client sockets
-  const clientRegistry = new Map<WebSocket, { room: string; name: string; role: string }>();
-
-  wss.on("connection", (ws: WebSocket) => {
-    ws.on("message", (rawMessage) => {
-      try {
-        const payload: WSMessage = JSON.parse(rawMessage.toString());
-        
-        if (payload.type === "join") {
-          const { room, name, role } = payload;
-          if (room && name && role) {
-            if (!activeRooms.has(room)) {
-              activeRooms.set(room, new Set());
-            }
-            activeRooms.get(room)!.add(ws);
-            clientRegistry.set(ws, { room, name, role });
-
-            // Notify everyone in the room about the updated member list
-            broadcastToRoom(room, {
-              type: "presence",
-              users: Array.from(activeRooms.get(room)!).map(socket => {
-                const client = clientRegistry.get(socket);
-                return { name: client?.name, role: client?.role };
-              })
-            });
-          }
-        } else {
-          // General room broadcast for updates, cursors, chats, or document state
-          const clientMeta = clientRegistry.get(ws);
-          if (clientMeta) {
-            broadcastToRoom(clientMeta.room, {
-              ...payload,
-              senderName: clientMeta.name,
-              senderRole: clientMeta.role
-            }, ws); // exclude sender to protect local state cursor loops
-          }
-        }
-      } catch (err) {
-        console.error("Failed to parse socket message:", err);
-      }
-    });
-
-    ws.on("close", () => {
-      const clientMeta = clientRegistry.get(ws);
-      if (clientMeta) {
-        const { room } = clientMeta;
-        const roomSockets = activeRooms.get(room);
-        if (roomSockets) {
-          roomSockets.delete(ws);
-          if (roomSockets.size === 0) {
-            activeRooms.delete(room);
-          } else {
-            // Update remaining attendees
-            broadcastToRoom(room, {
-              type: "presence",
-              users: Array.from(roomSockets).map(socket => {
-                const m = clientRegistry.get(socket);
-                return { name: m?.name, role: m?.role };
-              })
-            });
-          }
-        }
-        clientRegistry.delete(ws);
-      }
-    });
-  });
-
-  function broadcastToRoom(roomName: string, event: any, excludeSocket?: WebSocket) {
-    const sockets = activeRooms.get(roomName);
-    if (sockets) {
-      const serialized = JSON.stringify(event);
-      for (const socket of sockets) {
-        if (socket !== excludeSocket && socket.readyState === WebSocket.OPEN) {
-          socket.send(serialized);
-        }
-      }
-    }
-  }
 }
 
 startServer().catch((error) => {

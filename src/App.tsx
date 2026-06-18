@@ -1,22 +1,18 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Component, ErrorInfo, ReactNode } from "react";
 import DOMPurify from "dompurify";
-import WarRoom from "./components/WarRoom";
 import PitchDeck from "./components/PitchDeck";
-import MarketLandscape from "./components/MarketLandscape";
-import RunwaySandbox from "./components/RunwaySandbox";
-import VentureSentinel from "./components/VentureSentinel";
-import CoFounderHub from "./components/CoFounderHub";
 import CommandPalette from "./components/CommandPalette";
 import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
+import { supabase } from "./lib/supabase";
 
 const API = "/api/ai-proxy";
 const Q_TARGET = 6;
-const LIME = "#C8FF00";
-const PURPLE = "#B87FFF";
-const ORANGE = "#FF9F1C";
-const PINK = "#FF3C78";
-const CYAN = "#00FFFF";
-const BRANCH_COLORS = [LIME, PURPLE, CYAN, PINK, ORANGE, "#50E3C2"];
+const LIME = "#C8A24E"; // Sovereign Gilt
+const PURPLE = "#B8AFA0"; // Secondary Muted Sand/Silt
+const ORANGE = "#163C2E"; // Deep Emerald Green
+const PINK = "#5C2026"; // Crimson Oxblood
+const CYAN = "#D4AF37"; // Bright Accent Gold
+const BRANCH_COLORS = ["#C8A24E", "#B8AFA0", "#D4AF37", "#9BA88F", "#E5DCC6"];
 
 // ── SECURE CRYPTO VAULT ENGINE ────────────────────────────
 // Uses PBKDF2 + AES-GCM (all native Web Crypto) for zero-trust client-side vault encryption.
@@ -329,10 +325,17 @@ function AuthScreen({ onAuth }) {
       await store.set("session", sessionUser);
       onAuth(sessionUser, false);
     } catch (e: any) {
+      console.error("Firebase Google Sign-In Error Captured: ", e);
       if (e.code === "auth/popup-closed-by-user") {
-        setErr("Google login popup was closed.");
+        setErr("Google login window was closed before completion.");
+      } else if (e.code === "auth/unauthorized-domain") {
+        setErr(`🚨 UNAUTHORIZED DOMAIN: "${window.location.hostname}" is not on Firebase's authorized list. Go to Firebase Console > Authentication > Settings, and add "${window.location.hostname}" as an Authorized Domain.`);
+      } else if (e.code === "auth/operation-not-supported-in-this-environment" || e.code === "auth/auth-domain-config-required" || String(e.message).toLowerCase().includes("iframe") || String(e.message).toLowerCase().includes("sandbox")) {
+        setErr("🔒 PREVIEW FRAME RESTRICTION: Google popups are blocked inside sandboxed preview frames by modern browsers. Please use the 'Email/Password' cloud sync login above (which works perfectly here) or click 'Open in New Tab' to use Google Sign-In.");
+      } else if (e.code === "auth/popup-blocked") {
+        setErr("🚫 POPUP BLOCKED: Your browser blocked the sign-in popup. Enable popups or use Email/Password instead.");
       } else {
-        setErr(`Google authorization failed: ${e.message}`);
+        setErr(`⚠️ Google Auth failed: ${e.message || e}. Please make sure Google Sign-In is enabled in Firebase Console > Authentication > Sign-in method.`);
       }
     } finally {
       setLoading(false);
@@ -669,13 +672,13 @@ function Onboarding({ user, onDone }) {
       age: "Not specified",
       city: "Not specified",
       country: "Global",
-      industry: "Generic space",
-      market: "Global market target",
-      targetCustomer: "Generic audience segment",
+      industry: "Not specified",
+      market: "Not specified",
+      targetCustomer: "Not specified",
       stage: "Just an idea",
       techLevel: "Intermediate",
-      funding: "Bootstrapped / no money",
-      constraints: "General digital constraints",
+      funding: "Not specified",
+      constraints: "Not specified",
       bio: "Unspecified builder launching an idea",
       incomplete: true,
       completedAt: Date.now()
@@ -704,11 +707,11 @@ function Onboarding({ user, onDone }) {
       uid: user.uid,
       age: "Not specified",
       city: "Not specified",
-      industry: "General Tech",
-      market: `Users in ${val}`,
-      targetCustomer: "Early testing cohorts",
-      funding: "Bootstrapped / no money",
-      constraints: "Sandbox digital constraints",
+      industry: "Not specified",
+      market: "Not specified",
+      targetCustomer: "Not specified",
+      funding: "Not specified",
+      constraints: "Not specified",
       bio: `Builder focusing on MVP validation in ${updated.country || "Global market"}`,
       incomplete: true, // Mark incomplete for optional optional enhancement nudging later
       completedAt: Date.now()
@@ -1466,7 +1469,7 @@ const CONFIGS = {
   mindmap: { sys: `JSON only. {"center":"2-3 words","branches":[{"label":"2 words","color":"#hex","nodes":["short","short","short","short"]}]} 5-6 branches,3-4 nodes,max 4 words,vivid hex colors. Start with { end with }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
   blueprint: { sys: `JSON only. {"title":"...","vision":"sentence","sections":[{"title":"NAME","content":"2-3 sentences","bullets":["pt","pt","pt"]}]} 7 sections: Core Concept,Problem & Solution,Target Market,Unique Advantage,Key Assumptions,Critical Risks,Success Metrics. Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
   roadmap: { sys: `JSON only. {"title":"...","phases":[{"phase":"Phase 1","title":"...","duration":"X weeks","goal":"...","milestones":["...","...","..."],"kpis":["...","..."]}]} 4 phases: Foundation,Launch,Scale,Dominate. Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
-  businessplan: { sys: `JSON only. {"title":"...","oneliner":"pitch","sections":[{"title":"NAME","content":"content"}]} 10 sections: Problem,Solution,Market Size,Business Model,Revenue Streams,Go-To-Market,Competitive Moat,Team Requirements,Financial Projections,Next Steps. Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
+  businessplan: { sys: `JSON only. {"title":"...","oneliner":"pitch","sections":[{"title":"NAME","content":"content"}]} 10 sections: Problem,Solution,Market Size,Business Model & Unit Economics,Revenue Streams & Model,Go-To-Market,Competitive Moat,Team Requirements,Financial Projections & 12-month Runway,Next Steps. Specifically detail a rough revenue model, basic unit economics, and 12-month runway estimates based on target market parameters. Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
   actionplan: { sys: `JSON only. {"title":"...","weeks":[{"week":"Week 1","focus":"goal","tasks":[{"task":"action","priority":"HIGH","outcome":"result"}]}]} Priority: HIGH MED or LOW. 4 weeks,4-5 tasks. Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
   swot: { sys: `JSON only. {"title":"...","summary":"sentence","strengths":["...","...","...","..."],"weaknesses":["...","...","...","..."],"opportunities":["...","...","...","..."],"threats":["...","...","...","..."],"strategic_insight":"2-3 sentences"} Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
   promptpack: { sys: `JSON only. {"title":"...","tech_stack":["...","..."],"cursor_rules":"...","mvp_prompts":[{"step":"...","prompt":"..."}]} tech_stack needs 3-4 entries, cursor_rules needs 5-6 lines of developer system instructions matching founder's tech Level, 3 mvp_prompts. Start { end }`, usr: (idea, ctx, p) => `${profileContext(p)}\n${marketContext(p)}\nIdea:"${idea}"\n${ctx}` },
@@ -1489,6 +1492,93 @@ INSTRUCTIONS:
 3. Keep the question complete, self-contained, grammatically finished, and ending with a question mark. It must NEVER end abruptly or be truncated in the middle of a sentence.
 4. Do NOT include any intro, casual greetings, chit-chat, preamble, or response suffix. Start immediately with the question text.`;
 const ctxStr = pairs => pairs.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n");
+
+// ── SIGNATURE HALLMARK WAX SEAL ──────────────────────────
+function SignatureSeal() {
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      margin: "1.8rem auto 1rem",
+      animation: "stampIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards",
+      transformOrigin: "center center",
+      pointerEvents: "none",
+      userSelect: "none"
+    }}>
+      <div style={{
+        position: "relative",
+        width: "92px",
+        height: "92px",
+        borderRadius: "50%",
+        background: "radial-gradient(circle, #5C2026 50%, #3d1418 100%)", // Crimson Wax
+        border: "3px double #C8A24E", // Sovereign Gilt
+        boxShadow: "0 6px 14px rgba(0, 0, 0, 0.55), inset 0 2px 4px rgba(255, 255, 255, 0.25), inset 0 -4px 8px rgba(0,0,0,0.6)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 10,
+        overflow: "hidden"
+      }}>
+        <div style={{
+          color: "#F4EFE3",
+          fontFamily: '"Fraunces", serif',
+          fontSize: "9px",
+          fontWeight: 900,
+          textTransform: "uppercase",
+          letterSpacing: "0.5px",
+          textAlign: "center",
+          lineHeight: "1.2",
+          textShadow: "1px 1px 2px rgba(0,0,0,0.8)"
+        }}>
+          FORGE
+        </div>
+        <div style={{
+          color: "#C8A24E",
+          fontFamily: '"IBM Plex Mono", monospace',
+          fontSize: "6px",
+          fontWeight: "bold",
+          letterSpacing: "1px",
+          marginTop: "2px",
+          opacity: 0.9,
+          textShadow: "1px 1px 1px rgba(0,0,0,0.8)"
+        }}>
+          VALIDATED
+        </div>
+        <div style={{
+          color: "#C8A24E",
+          fontSize: "12px",
+          marginTop: "1px",
+          opacity: 0.85
+        }}>
+          ✦
+        </div>
+        <div style={{
+          position: "absolute",
+          inset: "6px",
+          border: "1px dashed rgba(200, 162, 78, 0.3)",
+          borderRadius: "50%",
+          pointerEvents: "none"
+        }} />
+      </div>
+      <style>{`
+        @keyframes stampIn {
+          0% {
+            opacity: 0;
+            transform: scale(3.5) rotate(-35deg);
+            filter: blur(4px);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1) rotate(-8deg);
+            filter: blur(0);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
 
 // ── MAIN APP ──────────────────────────────────────────────
 export default function App() {
@@ -1809,7 +1899,7 @@ ${ctxStr(pairs)}`;
         console.error("Auto Living DNA memory extraction skipped/failed:", me);
       }
     } catch {
-      setGlobalError("Active Intelligence Paused. Your offline business plans and vault data are fully secure. Feel free to re-trigger after a moment.");
+      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
     }
   }, [idea, profile, user, currentIdeaId]);
 
@@ -1860,7 +1950,7 @@ ${ctxStr(pairs)}`;
       setCurQ(cleanQuestion(q)); setPhase("questioning");
     } catch (e: any) { 
       setErr(e.message); 
-      setGlobalError("Active Intelligence Paused. Your data remains fully secure in-browser; try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
     }
     setLoading(false);
   };
@@ -1890,7 +1980,7 @@ ${ctxStr(pairs)}`;
       setCurQ(cleanQuestion(q));
     } catch (e) { 
       setErr(e.message); 
-      setGlobalError("Active Intelligence Paused. Your data remains fully secure in-browser; try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
     }
     setLoading(false);
     setTimeout(() => taRef.current?.focus(), 60);
@@ -1920,7 +2010,7 @@ ${ctxStr(pairs)}`;
     } catch (e) { 
       setErr(`Failed: ${e.message}`); 
       setPhase("output-select"); 
-      setGlobalError("Active Intelligence Paused. Your data remains fully secure in-browser; try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
     }
   };
 
@@ -1946,30 +2036,30 @@ ${ctxStr(pairs)}`;
   const scoreColor = s => s >= 80 ? LIME : s >= 60 ? CYAN : PINK;
 
   const G = {
-    app: { minHeight: "100vh", background: "#050505", color: "#f0f0f0", fontFamily: "monospace", display: "flex" as const, flexDirection: "column" as const, alignItems: "center", padding: "0 1.25rem" },
+    app: { minHeight: "100vh", background: "#0F0D0B", color: "#F4EFE3", fontFamily: '"Inter", sans-serif', display: "flex" as const, flexDirection: "column" as const, alignItems: "center", padding: "0 1.25rem" },
     wrap: { width: "100%", maxWidth: "820px", transition: "padding-right .3s" },
     label: { color: PURPLE, fontSize: "10px", textTransform: "uppercase" as const, letterSpacing: "3px", marginBottom: "0.65rem", fontWeight: "bold" as const },
-    ta: { width: "100%", background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", color: "#ffffff", fontSize: "0.96rem", padding: "1.1rem", resize: "none" as const, outline: "none", fontFamily: "monospace", lineHeight: "1.72", boxSizing: "border-box" as const },
-    btn: { background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.82rem 1.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase" as const },
-    ghost: { background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "0.55rem 1rem", fontSize: "11px", cursor: "pointer", fontFamily: "monospace", transition: "all .15s" },
-    err: { color: PINK, fontSize: "0.72rem", marginTop: "0.75rem", background: "rgba(255, 60, 120, 0.05)", border: "1px solid rgba(255, 60, 120, 0.15)", borderRadius: "6px", padding: "0.55rem 0.85rem" },
+    ta: { width: "100%", background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", color: "#F4EFE3", fontSize: "0.96rem", padding: "1.1rem", resize: "none" as const, outline: "none", fontFamily: '"Inter", sans-serif', lineHeight: "1.72", boxSizing: "border-box" as const },
+    btn: { background: LIME, color: "#0F0D0B", border: "none", borderRadius: "6px", padding: "0.82rem 1.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: "pointer", fontFamily: '"Inter", sans-serif', textTransform: "uppercase" as const },
+    ghost: { background: "transparent", color: "#B8AFA0", border: "1px solid #2E2A24", borderRadius: "6px", padding: "0.55rem 1rem", fontSize: "11px", cursor: "pointer", fontFamily: '"IBM Plex Mono", monospace', transition: "all .15s" },
+    err: { color: "#F4EFE3", fontSize: "0.72rem", marginTop: "0.75rem", background: "rgba(92, 32, 38, 0.12)", border: "1px solid #5C2026", borderRadius: "6px", padding: "0.55rem 0.85rem" },
   };
 
   return (
     <div style={{ ...G.app, position: "relative", overflowX: "hidden" }}>
       {/* Google-Gemini style flowing background ambient mesh orbs */}
-      <div style={{ position: "fixed", top: "-15%", right: "-15%", width: "70vw", height: "70vh", background: "radial-gradient(circle, rgba(184, 127, 255, 0.1) 0%, rgba(0,0,0,0) 70%)", filter: "blur(90px)", zIndex: 0, pointerEvents: "none", animation: "orbFlow 20s infinite ease-in-out" }} />
-      <div style={{ position: "fixed", bottom: "-10%", left: "-20%", width: "80vw", height: "80vh", background: "radial-gradient(circle, rgba(200, 255, 0, 0.05) 0%, rgba(0,0,0,0) 75%)", filter: "blur(110px)", zIndex: 0, pointerEvents: "none", animation: "orbFlowReverse 25s infinite ease-in-out" }} />
+      <div style={{ position: "fixed", top: "-15%", right: "-15%", width: "70vw", height: "70vh", background: "radial-gradient(circle, rgba(200, 162, 78, 0.05) 0%, rgba(0,0,0,0) 70%)", filter: "blur(90px)", zIndex: 0, pointerEvents: "none", animation: "orbFlow 20s infinite ease-in-out" }} />
+      <div style={{ position: "fixed", bottom: "-10%", left: "-20%", width: "80vw", height: "80vh", background: "radial-gradient(circle, rgba(22, 60, 46, 0.04) 0%, rgba(0,0,0,0) 75%)", filter: "blur(110px)", zIndex: 0, pointerEvents: "none", animation: "orbFlowReverse 25s infinite ease-in-out" }} />
 
       <style>{`
         @keyframes pulse{0%,100%{opacity:.1}50%{opacity:1}}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes glowPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 12px 2px rgba(184, 127, 255, 0.08)}}
+        @keyframes glowPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 12px 2px rgba(200, 162, 78, 0.04)}}
         @keyframes orbFlow{0%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,-30px) scale(1.15)}100%{transform:translate(0,0) scale(1)}}
         @keyframes orbFlowReverse{0%{transform:translate(0,0) scale(1)}50%{transform:translate(-30px,40px) scale(1.1)}100%{transform:translate(0,0) scale(1)}}
-        textarea:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 255, 0, 0.25)!important;}
-        input:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 255, 0, 0.25)!important;}
+        textarea:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 162, 78, 0.25)!important;}
+        input:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 162, 78, 0.25)!important;}
         .p-btn:hover{background:rgba(255,255,255,0.06)!important;color:#ffffff!important;}
         .outcard{
           background: rgba(12, 12, 12, 0.65)!important;
@@ -2038,7 +2128,7 @@ ${ctxStr(pairs)}`;
             <div>
               <label style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: "9px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "0.4rem" }}>MOST VALUABLE CORE ENGINES</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
-                {["SWOT War Room", "Runway Sandbox", "Pitch Simulator", "Venture Sentinel", "Co-Pilot Call Mode", "Geomarket Radar"].map(feat => {
+                {["Idea Intake & Challenge", "Blueprint Generation", "SWOT Analysis", "Dev Roadmap", "Prompt Pack", "Business Plan", "Pitch Simulator", "Forge Intel", "Idea Vault"].map(feat => {
                   const isSelected = feedbackState.features.includes(feat);
                   return (
                     <button
@@ -2123,21 +2213,7 @@ ${ctxStr(pairs)}`;
         </div>
       )}
 
-      {showSentinel && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
-            <VentureSentinel idea={idea} profile={profile} onClose={() => setShowSentinel(false)} />
-          </div>
-        </div>
-      )}
 
-      {showCoFounderHub && (
-        <div className="fixed inset-0 bg-[#050505]/98 z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto bg-[#050505] border border-[#1c1c1c] rounded-lg p-3 sm:p-5">
-            <CoFounderHub idea={idea} profile={profile} onClose={() => setShowCoFounderHub(false)} />
-          </div>
-        </div>
-      )}
 
       {showAuthGateway && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 99991, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(8px)", padding: "1.5rem" }}>
@@ -2204,31 +2280,10 @@ ${ctxStr(pairs)}`;
         </div>
       )}
 
-      {showWarRoom && (
-        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
-            <WarRoom idea={idea} profile={profile} swotData={(outputs as any).swot} onClose={() => setShowWarRoom(false)} />
-          </div>
-        </div>
-      )}
       {showPitchDeck && (
-        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
+        <div className="fixed inset-0 bg-[#0F0D0B]/90 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
+          <div className="w-full max-w-[1200px] mx-auto p-3 sm:p-5" style={{ background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "8px" }}>
             <PitchDeck idea={idea} profile={profile} blueprintData={(outputs as any).blueprint} businessPlanData={(outputs as any).businessplan} onClose={() => setShowPitchDeck(false)} />
-          </div>
-        </div>
-      )}
-      {showLandscape && (
-        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
-            <MarketLandscape idea={idea} profile={profile} onClose={() => setShowLandscape(false)} />
-          </div>
-        </div>
-      )}
-      {showRunway && (
-        <div className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-[9999] overflow-y-auto p-3 sm:p-6 md:p-8 box-border">
-          <div className="w-full max-w-[1200px] mx-auto glass p-3 sm:p-5">
-            <RunwaySandbox idea={idea} onClose={() => setShowRunway(false)} />
           </div>
         </div>
       )}
@@ -2237,11 +2292,11 @@ ${ctxStr(pairs)}`;
         
         {/* GLOBAL SECURITY / OFFLINE ERROR BANNER */}
         {globalError && (
-          <div style={{ width: "100%", background: "rgba(255, 60, 120, 0.12)", border: "1px solid rgba(255, 60, 120, 0.3)", borderRadius: "6px", padding: "0.85rem 1.2rem", marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", animation: "fadeIn 0.3s ease" }}>
-            <span style={{ color: "#ffffff", fontSize: "0.78rem", fontFamily: "monospace" }}>
-              ⚠️ <strong style={{ color: PINK }}>Active Intelligence Paused:</strong> Real-time simulation is momentarily sluggish. Your sandbox data remains secure. You can retry in a moment.
+          <div style={{ width: "100%", background: "rgba(92, 32, 38, 0.15)", border: "1px solid #5C2026", borderRadius: "6px", padding: "0.85rem 1.2rem", marginTop: "1rem", marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", animation: "fadeIn 0.3s ease" }}>
+            <span style={{ color: "#F4EFE3", fontSize: "0.78rem", fontFamily: "sans-serif" }}>
+              ⚠️ {globalError}
             </span>
-            <button onClick={() => setGlobalError("")} style={{ background: "transparent", border: "none", color: "#ffffff", opacity: 0.6, cursor: "pointer", fontSize: "12px", marginLeft: "10px" }}>✕</button>
+            <button onClick={() => setGlobalError("")} style={{ background: "transparent", border: "none", color: "#F4EFE3", opacity: 0.6, cursor: "pointer", fontSize: "12px", marginLeft: "10px" }}>✕</button>
           </div>
         )}
 
@@ -2473,118 +2528,30 @@ ${ctxStr(pairs)}`;
               </div>
             )}
 
-            <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", display: "flex", alignItems: "center", gap: "1rem", transition: "all .18s" }} onClick={() => setCompany(true)}>
-              <span style={{ fontSize: "1.25rem" }}>🏗️</span>
-              <div style={{ flex: 1 }}><div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.2rem", fontFamily: "monospace" }}>Company Builder</div><div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", fontFamily: "monospace" }}>Systems, workflows & org design — market-aware</div></div>
-              <span style={{ color: LIME, fontSize: "1rem", flexShrink: 0 }}>→</span>
-            </div>
-
-            {/* CO-FOUNDING AGILITY SUITE LAUNCHERS */}
-            <p style={{ ...G.label, marginTop: "1.8rem" }}>Venture Acceleration Agile Suite</p>
+            {/* ADVANCED VENTURE DELIVERABLES */}
+            <p style={{ ...G.label, marginTop: "1.85rem" }}>Advanced Venture Deliverables</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.78rem", marginBottom: "1.5rem" }}>
               
-              {/* War Room */}
-              <div 
-                className="outcard" 
-                style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
-                onClick={() => setShowWarRoom(true)}
-              >
-                <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>🤝</div>
-                <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Real-Time War Room</div>
-                <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Live WebSocket SWOT co-founding & sync cursors</div>
-              </div>
-
               {/* Pitch Deck */}
               <div 
                 className="outcard" 
-                style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
+                style={{ background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
                 onClick={() => setShowPitchDeck(true)}
               >
                 <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>🎨</div>
-                <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Pitch Deck Simulator</div>
-                <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Generate 8 live-interactive modular pitch slides</div>
+                <div style={{ color: "#F4EFE3", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: '"Fraunces", serif' }}>Pitch Deck Simulator</div>
+                <div style={{ color: "#B8AFA0", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: '"Inter", sans-serif' }}>Generate 8 live-interactive modular pitch slides</div>
               </div>
 
-              {/* Landscape Radar */}
+              {/* Company Builder */}
               <div 
                 className="outcard" 
-                style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
-                onClick={() => setShowLandscape(true)}
+                style={{ background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
+                onClick={() => setCompany(true)}
               >
-                <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>🗺️</div>
-                <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Local Landscape Radar</div>
-                <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>GIS density mappings & vulnerability heat sensors</div>
-              </div>
-
-              {/* Runway Sandbox */}
-              <div 
-                className="outcard" 
-                style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.05rem", cursor: "pointer", transition: "all .18s", position: "relative" }}
-                onClick={() => setShowRunway(true)}
-              >
-                <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>📊</div>
-                <div style={{ color: "#ffffff", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: "monospace" }}>Runway COGS Sandbox</div>
-                <div style={{ color: "rgba(255,255,255,0.42)", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: "monospace" }}>Model burns, margins, headcounts & 12M cash graphs</div>
-              </div>
-
-              {/* CO-FOUNDER CO-PILOT DECK — Living Memory companion */}
-              <div 
-                className="outcard" 
-                style={{ 
-                  background: "rgba(200, 255, 0, 0.05)", 
-                  border: "1px solid rgba(200, 255, 0, 0.35)", 
-                  borderRadius: "6px", 
-                  padding: "1.2rem", 
-                  cursor: "pointer", 
-                  transition: "all .18s", 
-                  position: "relative",
-                  gridColumn: "span 2",
-                  boxShadow: "0 0 15px rgba(200, 255, 0, 0.1)"
-                }}
-                onClick={() => setShowCoFounderHub(true)}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: "0.85rem", alignItems: "center" }}>
-                    <span style={{ fontSize: "1.95rem" }}>🛰️</span>
-                    <div>
-                      <div style={{ color: LIME, fontSize: "9px", fontWeight: "900", letterSpacing: "2.2px", fontFamily: "monospace" }}>LIVING WORKSPACE COMPANION</div>
-                      <div style={{ color: "#ffffff", fontSize: "0.88rem", fontWeight: "900", fontFamily: "monospace" }}>CO-FOUNDER CO-PILOT COMMAND DECK</div>
-                      <div style={{ color: "rgba(255,255,255,0.48)", fontSize: "0.68rem", fontFamily: "monospace", marginTop: "2px", lineHeight: "1.3" }}>
-                        Active advisory memory-links, customized investor rooms, cold outreach matchmakers, metric traction visuals & Swahili support translation.
-                      </div>
-                    </div>
-                  </div>
-                  <span style={{ color: LIME, fontSize: "10px", fontWeight: "900", animation: "pulse 1.8s infinite" }}>● ACTIVE COMPANION</span>
-                </div>
-              </div>
-
-              {/* Venture Sentinel — Autonomous AI from 2100 */}
-              <div 
-                className="outcard" 
-                style={{ 
-                  background: "rgba(184, 127, 255, 0.05)", 
-                  border: "1px solid rgba(184, 127, 255, 0.35)", 
-                  borderRadius: "6px", 
-                  padding: "1.05rem", 
-                  cursor: "pointer", 
-                  transition: "all .18s", 
-                  position: "relative",
-                  gridColumn: "span 2",
-                  boxShadow: "0 0 15px rgba(184, 127, 255, 0.1)"
-                }}
-                onClick={() => setShowSentinel(true)}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: "0.8rem", alignItems: "center" }}>
-                    <span style={{ fontSize: "1.80rem" }}>🤖</span>
-                    <div>
-                      <div style={{ color: PURPLE, fontSize: "9px", fontWeight: "900", letterSpacing: "2px", fontFamily: "monospace" }}>FUTURE AI FROM YEAR 2100</div>
-                      <div style={{ color: "#ffffff", fontSize: "0.85rem", fontWeight: "900", fontFamily: "monospace" }}>VENTURE SENTINEL DIAGNOSTICS</div>
-                      <div style={{ color: "rgba(255,255,255,0.48)", fontSize: "0.68rem", fontFamily: "monospace", marginTop: "2px" }}>Autonomous timeline defense, proactive accountability & future threat simulation</div>
-                    </div>
-                  </div>
-                  <span style={{ color: PURPLE, fontSize: "10px", fontWeight: "900", animation: "pulse 1.5s infinite" }}>● LIVE SENTINEL</span>
-                </div>
+                <div style={{ fontSize: "1.25rem", marginBottom: "0.42rem" }}>🏗️</div>
+                <div style={{ color: "#F4EFE3", fontSize: "0.82rem", fontWeight: "bold", marginBottom: "0.22rem", fontFamily: '"Fraunces", serif' }}>Company Builder</div>
+                <div style={{ color: "#B8AFA0", fontSize: "0.68rem", lineHeight: "1.4", fontFamily: '"Inter", sans-serif' }}>Systems, workflows & organizational models</div>
               </div>
 
             </div>
@@ -2653,7 +2620,7 @@ ${ctxStr(pairs)}`;
               </div>
             </div>
             <ErrorBoundary>
-              <div style={{ background: "#080808", border: "1px solid #1c1c1c", borderRadius: "6px", padding: (outType === "mindmap" || outType === "promptpack") ? "0" : "1.8rem" }}>
+              <div style={{ background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", padding: (outType === "mindmap" || outType === "promptpack") ? "0" : "1.8rem" }}>
                 {outType === "mindmap" && <MindMap data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
                 {outType === "blueprint" && <Blueprint data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
                 {outType === "roadmap" && <Roadmap data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
@@ -2661,6 +2628,8 @@ ${ctxStr(pairs)}`;
                 {outType === "actionplan" && <ActionPlan data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
                 {outType === "swot" && <SWOT data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
                 {outType === "promptpack" && <div style={{ padding: "1.8rem" }}><PromptPack data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} /></div>}
+                
+                {outType !== "mindmap" && <SignatureSeal />}
               </div>
             </ErrorBoundary>
           </div>
