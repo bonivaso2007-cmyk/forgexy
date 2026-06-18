@@ -3,7 +3,7 @@ import DOMPurify from "dompurify";
 import PitchDeck from "./components/PitchDeck";
 import CommandPalette from "./components/CommandPalette";
 import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
-import { supabase } from "./lib/supabase";
+import { supabase, reinitializeSupabase } from "./lib/supabase";
 
 const API = "/api/ai-proxy";
 const Q_TARGET = 6;
@@ -24,15 +24,6 @@ const CYAN = GOLD_BRIGHT;
 // ── SECURE CRYPTO VAULT ENGINE ────────────────────────────
 // Uses PBKDF2 + AES-GCM (all native Web Crypto) for zero-trust client-side vault encryption.
 // Plaintext data is never written to disk. The session key lives ONLY in-memory or transiently in sessionStorage (tab scope).
-
-async function hashPasswordSHA256(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 async function hashPasswordPBKDF2(password: string, saltHex: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -63,15 +54,15 @@ async function hashPasswordPBKDF2(password: string, saltHex: string): Promise<st
 }
 
 function getOrCreateGuestUid() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return "guest_user";
+  if (typeof window === "undefined") {
+    return "guest_fallback_server";
   }
-  let uid = localStorage.getItem("forge_guest_uid");
+  let uid = sessionStorage.getItem("forge_session_guest_uid");
   if (!uid) {
-    const randomBits = window.crypto.getRandomValues(new Uint8Array(8));
+    const randomBits = window.crypto.getRandomValues(new Uint8Array(12));
     const randomHex = Array.from(randomBits).map(b => b.toString(16).padStart(2, "0")).join("");
-    uid = `guest_${Date.now()}_${randomHex}`;
-    localStorage.setItem("forge_guest_uid", uid);
+    uid = `guest_session_${Date.now()}_${randomHex}`;
+    sessionStorage.setItem("forge_session_guest_uid", uid);
   }
   return uid;
 }
@@ -227,7 +218,7 @@ const store = {
       }
 
       // 2. If not found locally, try Supabase fallback
-      if (!rawVal && supabase) {
+      if (!rawVal && supabase && supabase.isInitialized) {
         if (k.startsWith("idea:")) {
           try {
             const parts = k.split(":");
@@ -297,7 +288,7 @@ const store = {
       }
 
       // Supabase replication
-      if (supabase) {
+      if (supabase && supabase.isInitialized) {
         if (k.startsWith("idea:")) {
           const parts = k.split(":");
           const uid = parts[1];
@@ -334,7 +325,7 @@ const store = {
   },
   async del(k: string) {
     try {
-      if (supabase) {
+      if (supabase && supabase.isInitialized) {
         if (k.startsWith("idea:")) {
           const parts = k.split(":");
           const ideaId = parts[2];
@@ -377,7 +368,7 @@ const store = {
       }
 
       // Supabase keys
-      if (supabase && prefix.startsWith("idea:")) {
+      if (supabase && supabase.isInitialized && prefix.startsWith("idea:")) {
         try {
           const parts = prefix.split(":");
           const uid = parts[1];
@@ -473,55 +464,10 @@ function marketContext(p) {
 
 // ── AUTH SCREENS ──────────────────────────────────────────
 function AuthScreen({ onAuth }) {
-  const [authType, setAuthType] = useState<"local">("local");
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ email: "", password: "", name: "" });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  const handleGitHubLogin = async () => {
-    setErr("");
-    setLoading(true);
-    try {
-      if (!supabase) {
-        setErr("Supabase configuration is missing. Setup Supabase to enable GitHub login.");
-        setLoading(false);
-        return;
-      }
-
-      const redirectUri = `${window.location.origin}/auth/callback`;
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "github",
-        options: {
-          redirectTo: redirectUri,
-          skipBrowserRedirect: true
-        }
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      if (data?.url) {
-        const authWindow = window.open(
-          data.url,
-          "oauth_popup",
-          "width=600,height=700,status=no,resizable=yes,scrollbars=yes"
-        );
-
-        if (!authWindow) {
-          setErr("Popup blocked! Please allow popups to log in with GitHub.");
-        }
-      } else {
-        throw new Error("No authorization URL was returned from Supabase.");
-      }
-    } catch (e: any) {
-      console.error("GitHub Login Failure:", e);
-      setErr(`GitHub Handshake Failed: ${e.message || e}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleLocalCryptAuth = async () => {
     setErr("");
@@ -555,18 +501,22 @@ function AuthScreen({ onAuth }) {
         
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
         const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-        const passwordHash = await hashPasswordPBKDF2(password, saltHex);
+        
+        // 1. Initialize Encryption (uses deriveKey function already in the file)
+        await initializeEncryption(password, saltHex);
+        
+        // 2. Generate secure PBKDF2 GCM verification block
+        const verificationPayload = await encryptData("pbkdf2_verified");
         
         const user = { 
           uid, 
           email: email.toLowerCase(), 
           name: name.trim(), 
-          passwordHash, 
+          verificationPayload, 
           saltHex, 
           createdAt: Date.now() 
         };
         
-        await initializeEncryption(password, saltHex);
         await store.set(`user:${uid}`, user);
         await store.set(`session`, { uid, email: user.email, name: user.name });
         onAuth(user, true);
@@ -578,46 +528,51 @@ function AuthScreen({ onAuth }) {
           return;
         }
         
+        if (!user.saltHex || (!user.verificationPayload && !user.passwordHash)) {
+          setErr("Account metadata is invalid or missing secure PBKDF2 credentials.");
+          setLoading(false);
+          return;
+        }
+        
+        // Initialize encryption with the input password and stored salt
+        await initializeEncryption(password, user.saltHex);
+        
         let isValid = false;
-        if (user.saltHex) {
+        
+        if (user.verificationPayload) {
+          // Verify password using native decryption of the secure block
+          const verificationCheck = await decryptData(user.verificationPayload);
+          isValid = (verificationCheck === "pbkdf2_verified");
+        } else if (user.passwordHash) {
+          // Upgrade path for legacy pure PBKDF2 hashes
           const pbkdf2Check = await hashPasswordPBKDF2(password, user.saltHex);
-          isValid = user.passwordHash === pbkdf2Check;
-        } else {
-          // Safe fallback checking oldest sha256 credentials in isolated scope
-          const shaHash = await hashPasswordSHA256(password);
-          isValid = user.passwordHash === shaHash;
+          isValid = (user.passwordHash === pbkdf2Check);
           
           if (isValid) {
-            // Auto upgrade profile schema integrity to secure PBKDF2 instantly
-            const salt = window.crypto.getRandomValues(new Uint8Array(16));
-            const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-            const freshPBKDF2Hash = await hashPasswordPBKDF2(password, saltHex);
-            user.saltHex = saltHex;
-            user.passwordHash = freshPBKDF2Hash;
+            // Quietly upgrade the user file to the verification block standard
+            const verificationPayload = await encryptData("pbkdf2_verified");
+            user.verificationPayload = verificationPayload;
             await store.set(`user:${uid}`, user);
           }
         }
         
         if (!isValid) {
+          // Zero-out session key on validation failure to maintain vault integrity
+          activeEncryptionKey = null;
+          activeSaltHex = "";
+          sessionStorage.removeItem("forge_vault_session");
           setErr("Invalid email or password.");
           setLoading(false);
           return;
         }
         
-        let sHex = user.saltHex || "";
-        if (!sHex) {
-          const salt = window.crypto.getRandomValues(new Uint8Array(16));
-          sHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-          user.saltHex = sHex;
-          user.passwordHash = await hashPasswordPBKDF2(password, sHex);
-          await store.set(`user:${uid}`, user);
-        }
-        
-        await initializeEncryption(password, sHex);
         await store.set(`session`, { uid, email: user.email, name: user.name });
         onAuth(user, false);
       }
     } catch (e: any) {
+      activeEncryptionKey = null;
+      activeSaltHex = "";
+      sessionStorage.removeItem("forge_vault_session");
       setErr(`Cryptographic threat mitigation blocks entry: ${e.message}`);
     } finally {
       setLoading(false);
@@ -696,41 +651,6 @@ function AuthScreen({ onAuth }) {
         <button onClick={submit} disabled={loading} style={{ width: "100%", background: LIME, color: "#1B1815", border: "none", borderRadius: "6px", padding: "0.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: loading ? "not-allowed" : "pointer", fontFamily: "monospace", marginTop: "1.2rem", opacity: loading ? 0.5 : 1 }}>
           {loading ? "…" : mode === "login" ? "LOG IN →" : "CREATE ACCOUNT →"}
         </button>
-
-        <div style={{ display: "flex", alignItems: "center", width: "100%", margin: "1.5rem 0 1rem" }}>
-          <div style={{ flex: 1, height: "1px", background: "rgba(244,239,227,0.12)" }} />
-          <span style={{ padding: "0 0.75rem", fontSize: "9px", color: "rgba(244,239,227,0.4)", letterSpacing: "2px", fontFamily: "monospace", textTransform: "uppercase" }}>OR CONTINUE WITH</span>
-          <div style={{ flex: 1, height: "1px", background: "rgba(244,239,227,0.12)" }} />
-        </div>
-
-        <button 
-          onClick={handleGitHubLogin} 
-          disabled={loading} 
-          style={{ 
-            width: "100%", 
-            background: "#24292e", 
-            color: "#ffffff", 
-            border: "1px solid rgb(46, 42, 36)", 
-            borderRadius: "6px", 
-            padding: "0.85rem", 
-            fontSize: "11px", 
-            fontWeight: "900", 
-            letterSpacing: "2px", 
-            cursor: loading ? "not-allowed" : "pointer", 
-            fontFamily: "monospace", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "center", 
-            gap: "0.5rem",
-            textTransform: "uppercase",
-            transition: "all 0.2s"
-          }}
-        >
-          <svg aria-hidden="true" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{ marginRight: "4px" }}>
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-          </svg>
-          GitHub Account
-        </button>
         
         <p style={{ color: "rgba(244,239,227,0.4)", fontSize: "0.68rem", textAlign: "center", marginTop: "1.5rem", lineHeight: "1.5" }}>
           Secure zero-trust cryptographic accounts encrypt your ideas locally using AES-GCM (PBKDF2 derivative) and replicate directly to your Supabase Vault in real-time.
@@ -743,22 +663,39 @@ function AuthScreen({ onAuth }) {
 // ── ONBOARDING ────────────────────────────────────────────
 function Onboarding({ user, onDone }) {
   const steps = [
+    { key: "age", label: "What is your age?", placeholder: "e.g. 25, 32", type: "input" },
+    { key: "city", label: "Which city are you operating from?", placeholder: "e.g. Dar es Salaam, Nairobi, San Francisco", type: "input" },
     { key: "country", label: "What country is your startup based in?", placeholder: "e.g. Tanzania, India, United States", type: "input" },
-    { key: "stage", label: "What stage is your venture at?", type: "choice", options: ["Just an idea", "Research phase", "Building MVP", "Have early users", "Revenue stage"] },
-    { key: "techLevel", label: "What is your level of technical execution?", type: "choice", options: ["Non-technical", "Basic (vibe coder)", "Intermediate", "Advanced developer"] },
+    { key: "industry", label: "What is your industry focus?", placeholder: "e.g. FinTech, Artificial Intelligence, AgTech", type: "input" },
+    { key: "market", label: "What is your Target Market size / scope?", placeholder: "e.g. East African mobile users, Global developers, US small businesses", type: "input" },
+    { key: "targetCustomer", label: "Who is your Ideal First Customer?", placeholder: "e.g. developers & builders, college students, small businesses", type: "input" },
+    { key: "stage", label: "What stage is your venture at?", type: "choice", options: ["Idea Phase", "Research phase", "Building MVP", "Have early users", "Revenue stage"] },
+    { key: "techLevel", label: "What is your level of technical execution?", type: "choice", options: ["Non-technical", "Intermediate", "Advanced developer"] },
+    { key: "funding", label: "How is your company currently funded?", type: "choice", options: ["Self-funded", "Pre-seed angel", "Venture backed", "Bootstrap (revenue)"] },
+    { key: "constraints", label: "What are your primary constraints?", type: "choice", options: ["Time-limited", "Budget-constrained", "No tech team", "Highly regulated market"] },
+    { key: "bio", label: "Could you summarize your founder bio & vision?", placeholder: "e.g. Dedicated developer building zero-trust cryptographic rails.", type: "textarea" },
   ];
 
   const [step, setStep] = useState(0);
-  const [data, setData] = useState({ country: "", stage: "", techLevel: "" });
+  const [data, setData] = useState({ 
+    age: "", city: "", country: "", industry: "", market: "", 
+    targetCustomer: "", stage: "Idea Phase", techLevel: "Intermediate", 
+    funding: "Self-funded", constraints: "Time-limited", bio: "" 
+  });
   const [val, setVal] = useState("");
   const [loading, setLoading] = useState(false);
   const cur = steps[step];
 
+  // Auto-sync val whenever we navigate steps
+  useEffect(() => {
+    setVal(data[cur.key] || "");
+  }, [step]);
+
   const skip = async () => {
     setLoading(true);
     const lightProfile = {
-      name: user.name,
-      email: user.email,
+      name: user.name || "Founder",
+      email: user.email || "",
       uid: user.uid,
       age: "Not specified",
       city: "Not specified",
@@ -766,12 +703,12 @@ function Onboarding({ user, onDone }) {
       industry: "Not specified",
       market: "Not specified",
       targetCustomer: "Not specified",
-      stage: "Just an idea",
+      stage: "Idea Phase",
       techLevel: "Intermediate",
-      funding: "Not specified",
-      constraints: "Not specified",
-      bio: "Unspecified builder launching an idea",
-      incomplete: true,
+      funding: "Self-funded",
+      constraints: "Time-limited",
+      bio: "Fictional founder exploring innovative startup concepts.",
+      incomplete: false,
       completedAt: Date.now()
     };
     await store.set(`profile:${user.uid}`, lightProfile);
@@ -784,27 +721,16 @@ function Onboarding({ user, onDone }) {
     setData(updated);
     
     if (step < steps.length - 1) {
-      const nextKey = steps[step + 1].key;
-      setVal(updated[nextKey] || "");
       setStep(s => s + 1);
       return;
     }
     setLoading(true);
-    // Build a complete profile, matching old schemas but with niceDefaults and marked incomplete
     const profile = {
       ...updated,
-      name: user.name,
-      email: user.email,
+      name: user.name || "Founder",
+      email: user.email || "",
       uid: user.uid,
-      age: "Not specified",
-      city: "Not specified",
-      industry: "Not specified",
-      market: "Not specified",
-      targetCustomer: "Not specified",
-      funding: "Not specified",
-      constraints: "Not specified",
-      bio: `Builder focusing on MVP validation in ${updated.country || "Global market"}`,
-      incomplete: true, // Mark incomplete for optional optional enhancement nudging later
+      incomplete: false,
       completedAt: Date.now()
     };
     await store.set(`profile:${user.uid}`, profile);
@@ -815,14 +741,11 @@ function Onboarding({ user, onDone }) {
     if (step > 0) {
       const updated = { ...data, [cur.key]: val };
       setData(updated);
-      const prevStep = step - 1;
-      const prevKey = steps[prevStep].key;
-      setVal(updated[prevKey] || "");
-      setStep(prevStep);
+      setStep(prev => prev - 1);
     }
   };
 
-  const progress = ((step) / steps.length) * 100;
+  const progress = ((step + 1) / steps.length) * 100;
 
   return (
     <div style={{ minHeight: "100vh", background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "Inter, sans-serif" }}>
@@ -1671,112 +1594,7 @@ function SignatureSeal() {
   );
 }
 
-// ── OAUTH CALLBACK HANDLER ──────────────────────────────
-function OAuthCallback() {
-  const [status, setStatus] = useState("Architecting cryptographic access credentials...");
 
-  useEffect(() => {
-    const processOAuthSession = async () => {
-      try {
-        if (!supabase) {
-          setStatus("Supabase client is not initialized in location configurations.");
-          return;
-        }
-
-        // Supabase client auto-parses token information from document hash/query on initialize or getSession
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-          throw error;
-        }
-
-        if (session) {
-          if (window.opener) {
-            window.opener.postMessage({ 
-              type: 'OAUTH_AUTH_SUCCESS', 
-              session 
-            }, window.location.origin);
-            setStatus("Core authorization secured. Completing handshake...");
-            setTimeout(() => {
-              window.close();
-            }, 800);
-          } else {
-            window.location.href = "/";
-          }
-        } else {
-          // Fallback interval to handle asynchronous Supabase session parsing
-          const interval = setInterval(async () => {
-            const { data: { session: checkSession } } = await supabase.auth.getSession();
-            if (checkSession) {
-              clearInterval(interval);
-              if (window.opener) {
-                window.opener.postMessage({ 
-                  type: 'OAUTH_AUTH_SUCCESS', 
-                  session: checkSession 
-                }, window.location.origin);
-                setStatus("Core authorization secured. Completing handshake...");
-                setTimeout(() => window.close(), 800);
-              } else {
-                window.location.href = "/";
-              }
-            }
-          }, 300);
-
-          // Force stop checking after 8 seconds and redirect
-          setTimeout(() => {
-            clearInterval(interval);
-            setStatus("No active cryptographic session detected. Redirecting to vault door...");
-            setTimeout(() => {
-              window.location.href = "/";
-            }, 1000);
-          }, 8000);
-        }
-      } catch (err: any) {
-        console.error("Cryptographic authorization handshake failed:", err);
-        setStatus(`Gateway handshake failed: ${err.message || err}`);
-      }
-    };
-
-    processOAuthSession();
-  }, []);
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#0F0D0B", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", color: "#F4EFE3", fontFamily: "Inter, sans-serif", textAlign: "center" }}>
-      <div style={{ background: "#1B1815", padding: "3rem 2.5rem", borderRadius: "12px", border: "1px solid #2E2A24", maxWidth: "460px", boxShadow: "0 12px 40px rgba(0,0,0,0.6)" }}>
-        <p style={{ color: "rgba(244,239,227,0.4)", fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", marginBottom: "1.2rem", display: "block" }}>SECURED HANDSHAKE</p>
-        <div style={{ 
-          display: "inline-flex", 
-          alignItems: "center", 
-          justifyContent: "center", 
-          width: "70px", 
-          height: "70px", 
-          borderRadius: "50%", 
-          background: "radial-gradient(circle, #2a220f 0%, #1b1815 100%)", 
-          border: "2px solid #D4AF37", 
-          boxShadow: "0 0 20px rgba(212, 175, 55, 0.3)",
-          marginBottom: "1.5rem"
-        }}>
-          <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="#C8A24E" strokeWidth="2">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0110 0v4" />
-          </svg>
-        </div>
-        <h2 style={{ color: "#C8A24E", fontSize: "1.42rem", fontWeight: "900", margin: "0 0 0.8rem", letterSpacing: "0.5px" }}>FORGE SECURE LINK</h2>
-        <p style={{ fontSize: "0.85rem", lineHeight: "1.6", color: "rgba(244, 239, 227, 0.7)", margin: "0 auto", maxWidth: "340px" }}>{status}</p>
-        <div style={{ 
-          marginTop: "2rem", 
-          display: "inline-block",
-          border: "2px solid #C8A24E", 
-          borderTopColor: "transparent", 
-          borderRadius: "50%", 
-          width: "24px", 
-          height: "24px", 
-          animation: "spin 1s linear infinite" 
-        }} />
-      </div>
-    </div>
-  );
-}
 
 // ── MAIN APP ──────────────────────────────────────────────
 export default function App() {
@@ -1797,10 +1615,6 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Toggle Focus mode with 'f' or 'F'
-      if (e.key === 'f' || e.key === 'F') {
-        setIsFocusMode(prev => !prev);
-      }
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setIsCommandOpen(prev => !prev);
@@ -1868,7 +1682,7 @@ export default function App() {
         features: feedbackState.features,
         submittedAt: Date.now(),
         userEmail: user?.email || "anonymous",
-        userUid: user?.uid || "guest"
+        userUid: user?.uid || getOrCreateGuestUid()
       };
 
       // Store in localStorage array for local state persistence
@@ -1878,7 +1692,7 @@ export default function App() {
       localStorage.setItem("forge_founder_feedbacks", JSON.stringify(list));
 
       // Also sync to Supabase if configured
-      if (supabase) {
+      if (supabase && supabase.isInitialized) {
         try {
           const { error } = await supabase.from('feedbacks').insert([{
             id: feedbackObj.id,
@@ -2016,45 +1830,12 @@ export default function App() {
       if (!u) { setAppState("auth"); return; }
       const p = await store.get(`profile:${session.uid}`);
       setUser(u);
-      if (!p) { setAppState("onboarding"); return; }
+      if (!p || p.incomplete === true || p.name === "Guest Visionary" || p.country === "Global Target") { setAppState("onboarding"); return; }
       setProfile(p); setAppState("app");
     })();
   }, []);
 
-  // Listen for message from OAuth Callback Handshake inside child popup
-  useEffect(() => {
-    const handleOauthMessage = async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        const sessionObj = event.data.session;
-        if (sessionObj && sessionObj.user) {
-          const email = sessionObj.user.email || `github_user_${sessionObj.user.id}@forge.dev`;
-          const uid = sessionObj.user.id;
-          const name = sessionObj.user.user_metadata?.full_name || sessionObj.user.user_metadata?.name || email.split("@")[0] || "Founder";
-          
-          const u = {
-            uid,
-            email,
-            name,
-            createdAt: Date.now(),
-            authType: "oauth"
-          };
 
-          // Store session and user entry in client-side persistence
-          await store.set(`user:${uid}`, u);
-          await store.set("session", { uid, email, name, authType: "oauth" });
-          
-          if (appState === "auth") {
-            handleAuth(u, false);
-          } else {
-            handleGuestAuth(u, false);
-          }
-        }
-      }
-    };
-    window.addEventListener('message', handleOauthMessage);
-    return () => window.removeEventListener('message', handleOauthMessage);
-  }, [appState]);
 
   const migrateGuestData = async (newUid: string) => {
     try {
@@ -2084,10 +1865,13 @@ export default function App() {
       // 2. Migrate Profile if guest profile exists
       const guestProfile = await store.get(`profile:${guestUid}`) || profile;
       if (guestProfile) {
+        const isDefaultTemplate = guestProfile.name === "Guest Visionary" || guestProfile.country === "Global Target";
+        const cleanName = (user && user.name && user.name !== "Guest Visionary") ? user.name : "Founder";
         await store.set(`profile:${newUid}`, {
           ...guestProfile,
           uid: newUid,
-          name: guestProfile.name === "Guest Visionary" ? guestProfile.name : guestProfile.name
+          name: cleanName,
+          incomplete: isDefaultTemplate
         });
         await store.del(`profile:${guestUid}`);
       }
@@ -2110,14 +1894,9 @@ export default function App() {
       await migrateGuestData(u.uid);
     }
     let p = await store.get(`profile:${u.uid}`);
-    if (!p) {
-      if (profile && profile.country !== "Global Target") {
-        p = { ...profile, name: u.name, email: u.email, incomplete: false };
-        await store.set(`profile:${u.uid}`, p);
-      } else {
-        setAppState("onboarding");
-        return;
-      }
+    if (!p || p.incomplete === true || p.name === "Guest Visionary" || p.country === "Global Target") {
+      setAppState("onboarding");
+      return;
     }
     setProfile(p); setAppState("app");
   };
@@ -2132,14 +1911,9 @@ export default function App() {
     setGuestAuthOpen(false);
     setShowAuthGateway(false);
     let p = await store.get(`profile:${u.uid}`);
-    if (!p) {
-      if (profile && profile.country !== "Global Target") {
-        p = { ...profile, name: u.name, email: u.email, incomplete: false };
-        await store.set(`profile:${u.uid}`, p);
-      } else {
-        setAppState("onboarding");
-        return;
-      }
+    if (!p || p.incomplete === true || p.name === "Guest Visionary" || p.country === "Global Target") {
+      setAppState("onboarding");
+      return;
     }
     setProfile(p); setAppState("app");
   };
@@ -2209,17 +1983,17 @@ ${ctxStr(pairs)}`;
             localStorage.setItem("forge_cofounder_memories", JSON.stringify(currentMemories));
 
             // Sync decision log to Supabase
-            if (supabase) {
+            if (supabase && supabase.isInitialized) {
               try {
                 const { error } = await supabase.from('decision_logs').insert([{
                   id: `mem:${Date.now()}`,
                   decision: cleanMem,
                   idea_id: id,
-                  user_uid: user?.uid || "guest",
+                  user_uid: user?.uid || getOrCreateGuestUid(),
                   timestamp: Date.now()
                 }]);
                 if (error) {
-                  await supabase.from('kv_store').insert([{ key: `mem:${Date.now()}`, value: JSON.stringify({ decision: cleanMem, idea_id: id, user_uid: user?.uid || "guest", timestamp: Date.now() }) }]);
+                  await supabase.from('kv_store').insert([{ key: `mem:${Date.now()}`, value: JSON.stringify({ decision: cleanMem, idea_id: id, user_uid: user?.uid || getOrCreateGuestUid(), timestamp: Date.now() }) }]);
                 } else {
                   console.log("✓ Live Decision Log synchronized to Supabase successfully");
                 }
@@ -2364,9 +2138,7 @@ ${ctxStr(pairs)}`;
     prefetchRef.current = {};
   };
 
-  if (window.location.pathname === "/auth/callback" || window.location.pathname === "/auth/callback/") {
-    return <OAuthCallback />;
-  }
+  // Callback routing removed as zero-trust accounts handle auth strictly client-side.
 
   if (appState === "loading") return <div style={{ minHeight: "100vh", background: "#050505", display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ color: LIME, fontSize: "10px", letterSpacing: "4px", fontFamily: "monospace", fontWeight: "bold" }}>LOADING SYSTEM…</div></div>;
   if (appState === "auth") return <AuthScreen onAuth={handleAuth} />;
@@ -2680,10 +2452,6 @@ ${ctxStr(pairs)}`;
           </div>
 
           <div style={{ display: "flex", gap: "0.45rem", alignItems: "center", flexWrap: "wrap", marginTop: "1rem" }}>
-             {/* FOCUS MODE TOGGLE BUTTON */}
-             <button onClick={() => setIsFocusMode(prev => !prev)} style={{...G.ghost, color: isFocusMode ? LIME : "rgba(255,255,255,0.5)"}}>
-               {isFocusMode ? "Exit Focus" : "Focus Mode (F)"}
-             </button>
             {user?.isGuest ? (
               <>
                 <button 
