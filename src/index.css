@@ -14,11 +14,16 @@ body {
 }
 
 :root {
-  --bg-base: #000000;
-  --bg-panel: #111111;
-  --text-base: #FAFAFA;
-  --text-muted: #666666;
-  --accent-lime: #CCFF00;
-  --border-panel: #222222;
+  --bg-base: #0F0D0B;
+  --bg-panel: #1A1815;
+  --text-base: #F4EFE3;
+  --text-muted: #8c8577;
+  --accent-gold-dark: #2a220f;
+  --accent-gold: #C8A24E;
+  --accent-gold-bright: #D4AF37;
+  --muted-sand: #B8AFA0;
+  --deep-emerald: #163C2E;
+  --crimson-oxblood: #5C2026;
+  --border-panel: #2E2A24;
 }
 

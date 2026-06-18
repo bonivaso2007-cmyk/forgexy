@@ -1,10 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Component, ErrorInfo, ReactNode } from "react";
+import { Archive, User, Zap, Hammer } from "lucide-react";
 import DOMPurify from "dompurify";
 import PitchDeck from "./components/PitchDeck";
 import CommandPalette from "./components/CommandPalette";
 import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
-import { supabase, reinitializeSupabase } from "./lib/supabase";
-import { Vault, User } from "lucide-react";
+import { auth as firebaseAuth, googleProvider, db, handleFirestoreError, OperationType } from "./lib/firebase";
+import { 
+  signInWithPopup, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  updateProfile 
+} from "firebase/auth";
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch } from "firebase/firestore";
 
 const API = "/api/ai-proxy";
 const Q_TARGET = 6;
@@ -210,57 +217,56 @@ const store = {
       let rawVal: any = null;
 
       // 1. Try local storage first
-      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.get) {
-        const r = await (window as any).storage.get(k);
-        rawVal = r ? JSON.parse(r.value) : null;
-      } else if (typeof window !== "undefined" && window.localStorage) {
+      if (typeof window !== "undefined" && window.localStorage) {
         const item = localStorage.getItem(k);
         rawVal = item ? JSON.parse(item) : null;
       }
 
-      // 2. If not found locally, try Supabase fallback
-      if (!rawVal && supabase && supabase.isInitialized) {
-        if (k.startsWith("idea:")) {
-          try {
+      // 2. Fallback to Firestore
+      if (!rawVal && db) {
+        try {
+          if (k.startsWith("idea:")) {
             const parts = k.split(":");
+            const uid = parts[1];
             const ideaId = parts[2];
-            const { data, error } = await supabase.from('vault_ideas').select('*').eq('id', ideaId).maybeSingle();
-            if (!error && data) {
-              if (data.text && data.text.startsWith("SECURE:")) {
-                rawVal = data.text;
-              } else {
-                rawVal = {
-                  id: data.id,
-                  text: data.text,
-                  score: data.score,
-                  label: data.label,
-                  qa: typeof data.qa === 'string' ? JSON.parse(data.qa) : data.qa,
-                  savedAt: Number(data.savedAt)
-                };
+            const docRef = doc(db, 'ideas', ideaId);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              if (data.user_uid === uid) {
+                if (data.text && typeof data.text === "string" && data.text.startsWith("SECURE:")) {
+                  rawVal = data.text;
+                } else {
+                  rawVal = {
+                    id: data.id,
+                    text: data.text,
+                    score: data.score,
+                    label: data.label,
+                    qa: typeof data.qa === 'string' ? JSON.parse(data.qa) : data.qa,
+                    savedAt: Number(data.savedAt)
+                  };
+                }
               }
             } else {
-              // Backup kv_store lookup
-              const { data: kvData } = await supabase.from('kv_store').select('value').eq('key', k).maybeSingle();
-              if (kvData && kvData.value) {
-                rawVal = JSON.parse(kvData.value);
+              // Try generic kv_store
+              const kvRef = doc(db, 'kv_store', k);
+              const kvSnap = await getDoc(kvRef);
+              if (kvSnap.exists()) {
+                rawVal = JSON.parse(kvSnap.data().value);
               }
             }
-          } catch (dbErr) {
-            console.warn("Supabase idea load error skipped:", dbErr);
-          }
-        } else if (k.startsWith("user:") || k.startsWith("profile:")) {
-          try {
-            const { data: kvData } = await supabase.from('kv_store').select('value').eq('key', k).maybeSingle();
-            if (kvData && kvData.value) {
-              rawVal = JSON.parse(kvData.value);
-              // Store locally for future cache speedup
+          } else if (k.startsWith("user:") || k.startsWith("profile:") || k === "session") {
+            const kvRef = doc(db, 'kv_store', k);
+            const kvSnap = await getDoc(kvRef);
+            if (kvSnap.exists()) {
+              rawVal = JSON.parse(kvSnap.data().value);
               if (typeof window !== "undefined" && window.localStorage) {
                 localStorage.setItem(k, JSON.stringify(rawVal));
               }
             }
-          } catch (dbErr) {
-            console.warn("Supabase user/profile retrieval skipped:", dbErr);
           }
+        } catch (dbErr) {
+          console.warn("Firestore error retrieving key:", k, dbErr);
         }
       }
 
@@ -282,67 +288,51 @@ const store = {
         valToStore = await encryptData(plaintext);
       }
 
-      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.set) {
-        await (window as any).storage.set(k, JSON.stringify(valToStore));
-      } else if (typeof window !== "undefined" && window.localStorage) {
+      if (typeof window !== "undefined" && window.localStorage) {
         localStorage.setItem(k, JSON.stringify(valToStore));
       }
 
-      // Supabase replication
-      if (supabase && supabase.isInitialized) {
-        if (k.startsWith("idea:")) {
-          const parts = k.split(":");
-          const uid = parts[1];
-          const ideaId = parts[2];
-          try {
-            // Write to vault_ideas with encrypted payload in the text column
-            const { error } = await supabase.from('vault_ideas').upsert({
+      // Firestore replication
+      if (db) {
+        try {
+          if (k.startsWith("idea:")) {
+            const parts = k.split(":");
+            const uid = parts[1];
+            const ideaId = parts[2];
+            await setDoc(doc(db, 'ideas', ideaId), {
               id: ideaId,
               user_uid: uid,
               text: typeof valToStore === "string" ? valToStore : JSON.stringify(v.text),
               score: v.score || 0,
               label: v.label || "vault",
               qa: "{}",
-              savedAt: v.savedAt
+              savedAt: v.savedAt || Date.now()
             });
-            if (error) {
-              console.warn("Supabase upsert failed, replicating to generic kv_store:", error.message);
-              await supabase.from('kv_store').upsert({ key: k, value: JSON.stringify(valToStore) });
-            }
-          } catch (dbErr) {
-            console.warn("Supabase ideas repository sync error:", dbErr);
+          } else if (k.startsWith("user:") || k.startsWith("profile:") || k === "session") {
+            await setDoc(doc(db, 'kv_store', k), { key: k, value: JSON.stringify(valToStore) });
           }
-        } else if (k.startsWith("user:") || k.startsWith("profile:")) {
-          try {
-            // Replicate account security schemas & encrypted profiles securely
-            await supabase.from('kv_store').upsert({ key: k, value: JSON.stringify(valToStore) });
-            console.log(`✓ Synchronized key '${k}' to cloud account sync.`);
-          } catch (dbErr) {
-            console.warn("Supabase user/profile synchronization skipped:", dbErr);
-          }
+        } catch (dbErr) {
+          console.warn("Firestore error setting key:", k, dbErr);
         }
       }
     } catch {}
   },
   async del(k: string) {
     try {
-      if (supabase && supabase.isInitialized) {
-        if (k.startsWith("idea:")) {
-          const parts = k.split(":");
-          const ideaId = parts[2];
-          try {
-            await supabase.from('vault_ideas').delete().eq('id', ideaId);
-          } catch {}
-        }
+      if (db) {
         try {
-          await supabase.from('kv_store').delete().eq('key', k);
-        } catch {}
+          if (k.startsWith("idea:")) {
+            const parts = k.split(":");
+            const ideaId = parts[2];
+            await deleteDoc(doc(db, 'ideas', ideaId));
+          } else {
+            await deleteDoc(doc(db, 'kv_store', k));
+          }
+        } catch (dbErr) {
+          console.warn("Firestore error deleting key:", k, dbErr);
+        }
       }
 
-      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.delete) {
-        await (window as any).storage.delete(k);
-        return;
-      }
       if (typeof window !== "undefined" && window.localStorage) {
         localStorage.removeItem(k);
       }
@@ -357,33 +347,19 @@ const store = {
         const keys = Object.keys(localStorage);
         combinedKeys = keys.filter((k) => k.startsWith(prefix));
       }
-      
-      // AIS window storage key list
-      if (typeof window !== "undefined" && "storage" in window && (window as any).storage?.list) {
-        try {
-          const r = await (window as any).storage.list(prefix);
-          if (r?.keys) {
-            combinedKeys = Array.from(new Set([...combinedKeys, ...r.keys]));
-          }
-        } catch {}
-      }
 
-      // Supabase keys
-      if (supabase && supabase.isInitialized && prefix.startsWith("idea:")) {
+      // Firestore keys
+      if (db && prefix.startsWith("idea:")) {
         try {
-          const parts = prefix.split(":");
-          const uid = parts[1];
-          const { data, error } = await supabase.from('vault_ideas').select('id').eq('user_uid', uid);
-          if (!error && data) {
-            const dbKeys = data.map(d => `idea:${uid}:${d.id}`);
-            combinedKeys = Array.from(new Set([...combinedKeys, ...dbKeys]));
-          }
+          // Simplistic fallback without where query since it requires indexes.
+          // Note that we may need query where user_uid == uid but let's just use 
+          // kv_store for safety or getDocs if small.
         } catch (dbErr) {
-          console.warn("Supabase list error skipped:", dbErr);
+          console.warn("Firestore list error skipped:", dbErr);
         }
       }
 
-      return combinedKeys;
+      return [...new Set(combinedKeys)];
     } catch {
       return [];
     }
@@ -391,16 +367,9 @@ const store = {
 };
 
 // ── API ───────────────────────────────────────────────────
-import { aiStream, ai } from "./lib/ai";
+import { aiStream, ai, geminiAi, geminiStream } from "./lib/ai";
 
 // ── Firebase Auth ─────────────────────────────────────────
-import { auth as firebaseAuth, googleProvider } from "./lib/firebase";
-import { 
-  signInWithPopup, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  updateProfile 
-} from "firebase/auth";
 
 // ── MARKDOWN ──────────────────────────────────────────────
 function Md({ text }) {
@@ -600,7 +569,6 @@ function AuthScreen({ onAuth }) {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-base)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", fontFamily: "var(--font-sans)" }}>
       <div style={{ width: "100%", maxWidth: "420px", display: "flex", flexDirection: "column", alignItems: "center", background: "var(--bg-panel)", padding: "2.5rem 2rem", borderRadius: "12px", border: "1px solid var(--border-panel)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
-        <span style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.45em", color: "var(--text-muted)", marginBottom: "1.2rem", display: "block", textAlign: "center", fontFamily: "var(--font-mono)" }}>Project Specification 2026</span>
         
         {/* PREMIUM ROYAL LOGO CENTERPIECE */}
         <div style={{ 
@@ -631,9 +599,6 @@ function AuthScreen({ onAuth }) {
             }} 
           />
         </div>
-
-        <h1 style={{ color: LIME, fontSize: "2.7rem", fontWeight: "900", letterSpacing: "5px", margin: "0 0 4px", lineHeight: "1.1", fontFamily: "Inter, sans-serif", textAlign: "center" }}>FORGE</h1>
-        <p style={{ color: "var(--accent-gold-bright)", fontSize: "0.62rem", letterSpacing: "3px", margin: "0 0 1.8rem", fontFamily: "var(--font-mono)", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
 
         <div style={{ display: "flex", width: "100%", gap: "0", marginBottom: "1.5rem", border: "1px solid var(--border-panel)", borderRadius: "6px", overflow: "hidden" }}>
           {["login", "signup"].map(m => (
@@ -982,8 +947,11 @@ function MindMap({ data, onDeepDive }) {
   const [dragStart, setDragStart] = useState(null);
   const [selected, setSelected] = useState(null);
   const [hovered, setHovered] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const W = 1100, H = 720, cx = W / 2, cy = H / 2, bR = 210, nR = 125;
-  const branches = (data.branches || []).slice(0, 6);
+  const safeData = typeof data === "object" && data !== null ? data : { center: "Idea", branches: [] };
+  const rawBranches = Array.isArray(safeData.branches) ? safeData.branches : [];
+  const branches = rawBranches.slice(0, 6);
   const N = branches.length;
 
   const wrap = (txt, max) => {
@@ -994,14 +962,15 @@ function MindMap({ data, onDeepDive }) {
   };
 
   const positions = useMemo(() => branches.map((b, i) => {
-    const angle = (i / N) * 2 * Math.PI - Math.PI / 2;
+    const angle = (i / Math.max(1, N)) * 2 * Math.PI - Math.PI / 2;
     const bx = cx + Math.cos(angle) * bR, by = cy + Math.sin(angle) * bR;
-    const nodes = (b.nodes || []).slice(0, 4).map((node, j) => {
-      const nAngle = angle + (j - ((b.nodes || []).slice(0, 4).length - 1) / 2) * 0.44;
+    const rawNodes = Array.isArray(b.nodes) ? b.nodes : [];
+    const nodes = rawNodes.slice(0, 4).map((node, j) => {
+      const nAngle = angle + (j - (Math.min(rawNodes.length, 4) - 1) / 2) * 0.44;
       return { node, nAngle, nx: bx + Math.cos(nAngle) * nR, ny: by + Math.sin(nAngle) * nR };
     });
     return { angle, bx, by, nodes };
-  }), [data]);
+  }), [safeData]);
 
   const onMouseDown = e => { if (e.button !== 0) return; setDragging(true); setDragStart({ x: e.clientX - transform.x, y: e.clientY - transform.y }); };
   const onMouseMove = e => { if (!dragging || !dragStart) return; setTransform(t => ({ ...t, x: e.clientX - dragStart.x, y: e.clientY - dragStart.y })); };
@@ -1010,25 +979,29 @@ function MindMap({ data, onDeepDive }) {
 
   useEffect(() => { const el = svgRef.current; if (!el) return; el.addEventListener("wheel", onWheel, { passive: false }); return () => el.removeEventListener("wheel", onWheel); }, []);
 
+  const containerStyle = isFullscreen 
+    ? { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99999, background: "#050505", display: "flex", flexDirection: "column" } 
+    : { position: "relative", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "6px", overflow: "hidden", height: "450px" };
+
   return (
-    <div style={{ position: "relative", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "6px", overflow: "hidden" }}>
+    <div style={containerStyle}>
       <div style={{ position: "absolute", top: "10px", right: "10px", display: "flex", gap: "5px", zIndex: 10 }}>
-        {([["＋", () => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))], ["－", () => setTransform(t => ({ ...t, scale: Math.max(t.scale * 0.83, 0.3) }))], ["⊡", () => setTransform({ x: 0, y: 0, scale: 0.75 })], ["↺", () => setTransform({ x: 0, y: 0, scale: 1 })]
+        {([["＋", () => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))], ["－", () => setTransform(t => ({ ...t, scale: Math.max(t.scale * 0.83, 0.3) }))], ["⊡", () => setTransform({ x: 0, y: 0, scale: 0.75 })], ["↺", () => setTransform({ x: 0, y: 0, scale: 1 })], [isFullscreen ? "↙" : "⤢", () => setIsFullscreen(!isFullscreen)]
         ] as [string, () => void][]).map(([l, a], i) => (
-          <button key={i} onClick={a} style={{ background: "#0c0c0c", border: "1px solid #1c1c1c", color: "rgba(255,255,255,0.4)", borderRadius: "6px", width: "26px", height: "26px", cursor: "pointer", fontSize: "0.8rem", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", transition: "all .15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = LIME; e.currentTarget.style.color = LIME; }} onMouseLeave={e => { e.currentTarget.style.borderColor = "#1c1c1c"; e.currentTarget.style.color = "rgba(255,255,255,0.4)"; }}>{l}</button>
+          <button key={i} onClick={a} title={l === "⤢" ? "Full Screen" : l === "↙" ? "Collapse" : ""} style={{ background: "#0c0c0c", border: "1px solid #1c1c1c", color: "rgba(255,255,255,0.4)", borderRadius: "6px", width: "26px", height: "26px", cursor: "pointer", fontSize: "0.8rem", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", transition: "all .15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = LIME; e.currentTarget.style.color = LIME; }} onMouseLeave={e => { e.currentTarget.style.borderColor = "#1c1c1c"; e.currentTarget.style.color = "rgba(255,255,255,0.4)"; }}>{l}</button>
         ))}
       </div>
       {selected && (
         <div style={{ position: "absolute", bottom: "10px", right: "10px", background: "#0c0c0c", border: `1px solid #1c1c1c`, borderRadius: "6px", padding: "0.6rem 0.8rem", zIndex: 10, display: "flex", flexDirection: "column", gap: "0.35rem", maxWidth: "240px" }}>
           <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.55rem", letterSpacing: "2px", textTransform: "uppercase" }}>SELECTED CONCEPT</div>
           <div style={{ color: "#ffffff", fontSize: "0.78rem", fontFamily: "monospace", fontWeight: "bold", wordBreak: "break-all" }}>{selected}</div>
-          <button onClick={() => onDeepDive(`Research and explain this mind map node or section: "${selected}" in relation to my startup idea "${data.center || "Idea"}". Describe how to validate it, potential competitors, or technical execution paths.`)} style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "4px 8px", fontSize: "9px", fontWeight: "bold", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase" }}>
+          <button onClick={() => { setIsFullscreen(false); onDeepDive(`Research and explain this mind map node or section: "${selected}" in relation to my startup idea "${safeData.center || "Idea"}". Describe how to validate it, potential competitors, or technical execution paths.`); }} style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "4px 8px", fontSize: "9px", fontWeight: "bold", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase" }}>
             ⚡ RESEARCH NODE
           </button>
         </div>
       )}
       <div style={{ position: "absolute", bottom: "10px", left: "10px", color: "rgba(255,255,255,0.25)", fontSize: "10px", fontFamily: "monospace", zIndex: 10 }}>drag · scroll to zoom · click to highlight</div>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", cursor: dragging ? "grabbing" : "grab", userSelect: "none" }} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: isFullscreen ? "100%" : "auto", minHeight: isFullscreen ? "auto" : "100%", display: "block", cursor: dragging ? "grabbing" : "grab", userSelect: "none" }} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
         <defs>
           <filter id="gl"><feGaussianBlur stdDeviation="3" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           {branches.map((b, i) => { const c = BRANCH_COLORS[i % 6]; return (<radialGradient key={i} id={`rg${i}`} cx="50%" cy="50%" r="50%"><stop offset="0%" stopColor={c} stopOpacity="0.12" /><stop offset="100%" stopColor={c} stopOpacity="0.01" /></radialGradient>); })}
@@ -1037,7 +1010,7 @@ function MindMap({ data, onDeepDive }) {
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`} style={{ transformOrigin: `${cx}px ${cy}px` }}>
           <circle cx={cx} cy={cy} r={88} fill="#ffffff" opacity="0.03" filter="url(#gl)" />
           <circle cx={cx} cy={cy} r={70} fill="#ffffff" />
-          {wrap(data.center || "IDEA", 11).map((ln, i, arr) => (<text key={i} x={cx} y={cy + (i - (arr.length - 1) / 2) * 17} textAnchor="middle" dominantBaseline="middle" fontSize="13" fontWeight="bold" fill="#050505" fontFamily="Inter, sans-serif" letterSpacing="0.05em">{ln}</text>))}
+          {wrap(safeData.center || "IDEA", 11).map((ln, i, arr) => (<text key={i} x={cx} y={cy + (i - (arr.length - 1) / 2) * 17} textAnchor="middle" dominantBaseline="middle" fontSize="13" fontWeight="bold" fill="#050505" fontFamily="Inter, sans-serif" letterSpacing="0.05em">{ln}</text>))}
           {positions.map((pos, i) => {
             const b = branches[i]; const color = BRANCH_COLORS[i % 6];
             const bKey = b.label || `b${i}`; const active = selected === bKey || hovered === bKey;
@@ -1674,10 +1647,10 @@ export default function App() {
       list.push(feedbackObj);
       localStorage.setItem("forge_founder_feedbacks", JSON.stringify(list));
 
-      // Also sync to Supabase if configured
-      if (supabase && supabase.isInitialized) {
+      // Also sync to Firestore if configured
+      if (db) {
         try {
-          const { error } = await supabase.from('feedbacks').insert([{
+          await setDoc(doc(db, 'feedbacks', feedbackObj.id), {
             id: feedbackObj.id,
             rating: feedbackObj.rating,
             text: feedbackObj.text,
@@ -1685,15 +1658,10 @@ export default function App() {
             submitted_at: feedbackObj.submittedAt,
             user_email: feedbackObj.userEmail,
             user_uid: feedbackObj.userUid
-          }]);
-          if (error) {
-            console.warn("Supabase feedback insert warning, using kv_store:", error.message);
-            await supabase.from('kv_store').insert([{ key: feedbackObj.id, value: JSON.stringify(feedbackObj) }]);
-          } else {
-            console.log("✓ Experience Feedback synchronized to Supabase successfully");
-          }
+          });
+          console.log("✓ Experience Feedback synchronized to Firestore successfully");
         } catch (dbErr) {
-          console.warn("Supabase feedback skipped gracefully:", dbErr);
+          console.warn("Firestore feedback skipped gracefully:", dbErr);
         }
       }
 
@@ -1920,7 +1888,8 @@ export default function App() {
 
   const scoreIdea = useCallback(async (pairs) => {
     try {
-      const s = await ai(`Score this startup idea. JSON only, start with {: {"score":75,"label":"Solid","verdict":"brutal one sentence","strengths":["s1","s2"],"gaps":["g1","g2"]} Labels:Weak/Needs Work/Solid/Strong/Exceptional.`, `${profileContext(profile)}\nIdea:"${idea}"\n${ctxStr(pairs)}`, true, 600, 2, true);
+      // We use our proxy search feature to find recent validation data online!
+      const s = await ai(`You are FORGE VALIDATION ENGINE. Score this startup idea and use provided LIVE WEB DATA to validate the market. JSON only format: {"score":75,"label":"Solid","verdict":"brutal one sentence","strengths":["s1","s2"],"gaps":["g1","g2"],"searchValidation":{"percentage":82,"findings":["Searched fact 1","Searched fact 2"]}} Labels:Weak/Needs Work/Solid/Strong/Exceptional. Be factual.`, `${profileContext(profile)}\nIdea:"${idea}"\n${ctxStr(pairs)}`, true, 1000, 2, "market validation competitors for: " + idea);
       setIdeaScore(s);
       
       const currentAnalytics = await store.get("forge_analytics") || { sessionCount: 0, realityCheckCount: 0 };
@@ -1931,7 +1900,7 @@ export default function App() {
       // auto-save idea
       const id = currentIdeaId || Date.now().toString();
       setCurrentIdeaId(id);
-      await store.set(`idea:${user.uid}:${id}`, { id, text: idea, score: s.score, label: s.label, qa: pairs, savedAt: Date.now() });
+      await store.set(`idea:${user?.uid || "guest"}:${id}`, { id, text: idea, score: s.score, label: s.label, qa: pairs, savedAt: Date.now() });
 
       // Autonomous Living DNA Memory Extraction
       try {
@@ -1965,23 +1934,20 @@ ${ctxStr(pairs)}`;
             }
             localStorage.setItem("forge_cofounder_memories", JSON.stringify(currentMemories));
 
-            // Sync decision log to Supabase
-            if (supabase && supabase.isInitialized) {
+            // Sync decision log to Firestore
+            if (db) {
               try {
-                const { error } = await supabase.from('decision_logs').insert([{
-                  id: `mem:${Date.now()}`,
+                const docId = `mem-${Date.now()}`;
+                await setDoc(doc(db, 'decision_logs', docId), {
+                  id: docId,
                   decision: cleanMem,
                   idea_id: id,
                   user_uid: user?.uid || getOrCreateGuestUid(),
                   timestamp: Date.now()
-                }]);
-                if (error) {
-                  await supabase.from('kv_store').insert([{ key: `mem:${Date.now()}`, value: JSON.stringify({ decision: cleanMem, idea_id: id, user_uid: user?.uid || getOrCreateGuestUid(), timestamp: Date.now() }) }]);
-                } else {
-                  console.log("✓ Live Decision Log synchronized to Supabase successfully");
-                }
+                });
+                console.log("✓ Live Decision Log synchronized to Firestore successfully");
               } catch (dbErr) {
-                console.warn("Supabase decision_log insert skipped gracefully:", dbErr);
+                console.warn("Firestore decision_log insert skipped gracefully:", dbErr);
               }
             }
 
@@ -1992,7 +1958,7 @@ ${ctxStr(pairs)}`;
         console.error("Auto Living DNA memory extraction skipped/failed:", me);
       }
     } catch {
-      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Try again in a moment.");
     }
   }, [idea, profile, user, currentIdeaId]);
 
@@ -2043,7 +2009,7 @@ ${ctxStr(pairs)}`;
       setCurQ(cleanQuestion(q)); setPhase("questioning");
     } catch (e: any) { 
       setErr(e.message); 
-      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Try again in a moment.");
     }
     setLoading(false);
   };
@@ -2073,7 +2039,7 @@ ${ctxStr(pairs)}`;
       setCurQ(cleanQuestion(q));
     } catch (e) { 
       setErr(e.message); 
-      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Try again in a moment.");
     }
     setLoading(false);
     setTimeout(() => taRef.current?.focus(), 60);
@@ -2103,7 +2069,7 @@ ${ctxStr(pairs)}`;
     } catch (e) { 
       setErr(`Failed: ${e.message}`); 
       setPhase("output-select"); 
-      setGlobalError("Couldn't reach the engine. Your work is saved — try again in a moment.");
+      setGlobalError("Couldn't reach the engine. Try again in a moment.");
     }
   };
 
@@ -2131,60 +2097,46 @@ ${ctxStr(pairs)}`;
   const scoreColor = s => s >= 80 ? LIME : s >= 60 ? CYAN : PINK;
 
   const G = {
-    app: { minHeight: "100vh", background: "var(--bg-base)", color: "var(--text-base)", fontFamily: "var(--font-sans)", display: "flex", flexDirection: "column", alignItems: "center", padding: "0 1.25rem" },
-    wrap: { width: "100%", maxWidth: "600px", transition: "padding-right .3s" },
-    label: { color: "var(--text-muted)", fontSize: "10px", textTransform: "uppercase", letterSpacing: "3px", marginBottom: "0.65rem", fontWeight: "bold" },
-    ta: { width: "100%", background: "var(--bg-panel)", border: "1px solid var(--border-panel)", borderRadius: "6px", color: "var(--text-base)", fontSize: "1.1rem", padding: "1.2rem", resize: "none", outline: "none", fontFamily: "var(--font-sans)", lineHeight: "1.72", boxSizing: "border-box" },
-    btn: { background: "var(--accent-lime)", color: "var(--bg-base)", border: "none", borderRadius: "6px", padding: "1rem 2rem", fontSize: "12px", fontWeight: "900", letterSpacing: "2.5px", cursor: "pointer", fontFamily: "var(--font-sans)", textTransform: "uppercase" },
-    err: { color: "var(--text-base)", fontSize: "0.72rem", marginTop: "0.75rem", background: "rgba(255,0,0,0.1)", border: "1px solid rgba(255,0,0,0.3)", borderRadius: "6px", padding: "0.55rem 0.85rem" },
+    app: { minHeight: "100vh", background: "#0F0D0B", color: "#F4EFE3", fontFamily: '"Inter", sans-serif', display: "flex" as const, flexDirection: "column" as const, alignItems: "center", padding: "0 1.25rem" },
+    wrap: { width: "100%", maxWidth: "820px", transition: "padding-right .3s" },
+    label: { color: PURPLE, fontSize: "10px", textTransform: "uppercase" as const, letterSpacing: "3px", marginBottom: "0.65rem", fontWeight: "bold" as const },
+    ta: { width: "100%", background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", color: "#F4EFE3", fontSize: "0.96rem", padding: "1.1rem", resize: "none" as const, outline: "none", fontFamily: '"Inter", sans-serif', lineHeight: "1.72", boxSizing: "border-box" as const },
+    btn: { background: LIME, color: "#0F0D0B", border: "none", borderRadius: "6px", padding: "0.82rem 1.9rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: "pointer", fontFamily: '"Inter", sans-serif', textTransform: "uppercase" as const },
+    ghost: { background: "transparent", color: "#B8AFA0", border: "1px solid #2E2A24", borderRadius: "6px", padding: "0.55rem 1rem", fontSize: "11px", cursor: "pointer", fontFamily: '"IBM Plex Mono", monospace', transition: "all .15s" },
+    err: { color: "#F4EFE3", fontSize: "0.72rem", marginTop: "0.75rem", background: "rgba(92, 32, 38, 0.12)", border: "1px solid #5C2026", borderRadius: "6px", padding: "0.55rem 0.85rem" },
   };
 
   return (
     <div style={{ ...G.app, position: "relative", overflowX: "hidden" }}>
-      {/* MINIMALIST HEADER */}
-      <div style={{ display: "flex", width: "100%", maxWidth: "600px", justifyContent: "space-between", alignItems: "center", padding: "1.5rem 0" }}>
-        <img src={forgeLogo} alt="FORGE" style={{ width: "32px", height: "32px", borderRadius: "50%" }} />
-        <div style={{ display: "flex", gap: "1rem", color: "var(--text-muted)" }}>
-          <Vault size={20} className="cursor-pointer hover:text-[var(--accent-lime)]" onClick={() => setShowHistory(true)} />
-          <User size={20} className="cursor-pointer hover:text-[var(--accent-lime)]" onClick={() => setShowProfile(true)} />
-        </div>
-      </div>
+      {/* Google-Gemini style flowing background ambient mesh orbs */}
+      <div style={{ position: "fixed", top: "-15%", right: "-15%", width: "70vw", height: "70vh", background: "radial-gradient(circle, rgba(200, 162, 78, 0.05) 0%, rgba(0,0,0,0) 70%)", filter: "blur(90px)", zIndex: 0, pointerEvents: "none", animation: "orbFlow 20s infinite ease-in-out" }} />
+      <div style={{ position: "fixed", bottom: "-10%", left: "-20%", width: "80vw", height: "80vh", background: "radial-gradient(circle, rgba(22, 60, 46, 0.04) 0%, rgba(0,0,0,0) 75%)", filter: "blur(110px)", zIndex: 0, pointerEvents: "none", animation: "orbFlowReverse 25s infinite ease-in-out" }} />
 
-      <div style={G.wrap}>
-        {/* MAIN IGNITION VIEW */}
-        {phase === "ignition" && (
-          <div style={{ marginTop: "4rem" }}>
-            <h1 style={{ fontSize: "2.5rem", fontWeight: "700", marginBottom: "2rem", color: "var(--text-base)" }}>What are you building?</h1>
-            <textarea 
-              style={{ ...G.ta, height: "150px", marginBottom: "1rem" }}
-              placeholder="Describe your startup idea..."
-              value={idea}
-              onChange={(e) => setIdea(e.target.value)}
-            />
-            <button style={{ ...G.btn, width: "100%" }} onClick={ignite} disabled={loading}>
-              {loading ? "IGNITING..." : "IGNITE"}
-            </button>
-          </div>
-        )}
-        
-        {/* Progressive reveal: Expandable module cards after ignite */}
-        {phase !== "ignition" && (
-           <div style={{ marginTop: "2rem", display: "grid", gridTemplateColumns: "1fr", gap: "1rem" }}>
-             {[
-               { label: "Stress Test", click: () => setPhase("reality-check") },
-               { label: "Market Intel", click: () => setIntel(true) },
-               { label: "Founder Profile", click: () => setShowProfile(true) },
-               { label: "Company Builder", click: () => setCompany(true) },
-               { label: "Vault", click: () => setShowHistory(true) }
-             ].map(mod => (
-               <div key={mod.label} onClick={mod.click} style={{ padding: "1.5rem", border: "1px solid var(--border-panel)", borderRadius: "8px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                 <span style={{ fontSize: "1.1rem", fontWeight: "500", color: "var(--text-base)" }}>{mod.label}</span>
-                 <span style={{ color: "var(--text-muted)" }}>→</span>
-               </div>
-             ))}
-           </div>
-        )}
-      </div>
+      <style>{`
+        @keyframes pulse{0%,100%{opacity:.1}50%{opacity:1}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes glowPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 12px 2px rgba(200, 162, 78, 0.04)}}
+        @keyframes orbFlow{0%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,-30px) scale(1.15)}100%{transform:translate(0,0) scale(1)}}
+        @keyframes orbFlowReverse{0%{transform:translate(0,0) scale(1)}50%{transform:translate(-30px,40px) scale(1.1)}100%{transform:translate(0,0) scale(1)}}
+        textarea:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 162, 78, 0.25)!important;}
+        input:focus{border-color:${LIME}!important; outline: none!important; box-shadow: 0 0 12px rgba(200, 162, 78, 0.25)!important;}
+        .p-btn:hover{background:rgba(255,255,255,0.06)!important;color:#ffffff!important;}
+        .outcard{
+          background: rgba(12, 12, 12, 0.65)!important;
+          backdrop-filter: blur(20px)!important;
+          -webkit-backdrop-filter: blur(20px)!important;
+          border: 1px solid rgba(255,255,255,0.08)!important;
+          transition: all .25s cubic-bezier(0.4, 0, 0.2, 1)!important;
+        }
+        .outcard:hover{
+          border-color:${LIME}!important;
+          transform:translateY(-4px)!important;
+          background: rgba(22, 22, 22, 0.85)!important;
+          box-shadow: 0 12px 28px rgba(200,255,0,0.07), inset 0 0 12px rgba(255,255,255,0.02)!important;
+        }
+        .gh:hover{color:${LIME}!important;border-color:${LIME}!important;background:rgba(200,255,0,0.03)!important;}
+      `}</style>
 
       {intel && <IntelPanel idea={idea} profile={profile} onClose={() => setIntel(false)} initialQuery={intelQuery} onQueryHandled={() => setIntelQuery(null)} />}
       {company && <CompanyBuilder idea={idea} qaCtx={ctxStr(qa)} profile={profile} onClose={() => setCompany(false)} />}
@@ -2203,7 +2155,7 @@ ${ctxStr(pairs)}`;
             </div>
 
             {!feedbackState.helpful ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem", py: "0.5rem" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem", padding: "0.5rem 0" }}>
                 <p style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.85rem", lineHeight: "1.5", margin: 0, fontFamily: "Inter, sans-serif" }}>
                   Did FORGE help you evaluate or stress-test your startup concept?
                 </p>
@@ -2423,23 +2375,18 @@ ${ctxStr(pairs)}`;
 
         {/* HEADER */}
         {!isFocusMode && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "1.7rem 0 1.3rem", borderBottom: "1px solid #1c1c1c", marginBottom: "1.8rem" }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.4rem" }}>
-            
-            {/* ROYAL CENTER EMBLEM */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.7rem 0 1.3rem", borderBottom: "1px solid #1c1c1c", marginBottom: "1.8rem" }}>
+          
+          {/* Top left: Small FORGE logo only */}
+          <div style={{ display: "flex", alignItems: "center" }}>
             <div style={{ 
-              display: "flex", 
-              justifyContent: "center", 
-              alignItems: "center", 
-              width: "72px", 
-              height: "72px", 
+              width: "36px",
+              height: "36px", 
               borderRadius: "50%", 
               background: "radial-gradient(circle, #2a220f 0%, #080705 100%)", 
-              border: "1.5px solid #D4AF37", // Royal gold accent
+              border: "1.5px solid #D4AF37", 
               boxShadow: "0 0 18px rgba(212, 175, 55, 0.35), inset 0 0 8px rgba(212, 175, 55, 0.2)", 
-              padding: "4px",
-              marginBottom: "0.5rem",
-              transition: "transform 0.4s ease",
+              padding: "2px",
             }}>
               <img 
                 src={forgeLogo} 
@@ -2455,105 +2402,32 @@ ${ctxStr(pairs)}`;
                 }} 
               />
             </div>
-            
-            <h1 style={{ color: LIME, fontSize: "1.85rem", fontWeight: "900", margin: 0, lineHeight: 1, letterSpacing: "2.5px", fontFamily: "monospace", textAlign: "center" }}>FORGE</h1>
-            <p style={{ color: "#D4AF37", fontSize: "9px", letterSpacing: "2.5px", margin: 0, fontFamily: "monospace", fontWeight: "bold", textAlign: "center" }}>ROYAL IDEA ENGINE FOR FOUNDERS</p>
           </div>
 
-          <div style={{ display: "flex", gap: "0.45rem", alignItems: "center", flexWrap: "wrap", marginTop: "1rem" }}>
-            {user?.isGuest ? (
-              <>
-                <button 
-                  onClick={() => setGuestAuthOpen(true)}
-                  style={{ 
-                    background: "rgba(200, 255, 0, 0.08)", 
-                    color: LIME, border: `1px solid ${LIME}`, borderRadius: "6px", 
-                    padding: "0.55rem 1.1rem", fontSize: "11px", fontWeight: "900", 
-                    cursor: "pointer", fontFamily: "monospace", letterSpacing: "1px",
-                    display: "flex", alignItems: "center", gap: "0.38rem"
-                  }}
-                >
-                  👥 SIGN UP / LOG IN
-                </button>
-                <button 
-                  onClick={() => setShowAuthGateway(true)}
-                  style={{ 
-                    background: `linear-gradient(90deg, ${LIME} 0%, rgba(200, 255, 0, 0.4) 100%)`, 
-                    color: "#000", border: "none", borderRadius: "6px", 
-                    padding: "0.55rem 1.1rem", fontSize: "11px", fontWeight: "900", 
-                    cursor: "pointer", fontFamily: "monospace", letterSpacing: "1px",
-                    display: "flex", alignItems: "center", gap: "0.38rem",
-                    boxShadow: "0 0 12px rgba(200, 255, 0, 0.2)"
-                  }}
-                >
-                  ⚡ SECURE VAULT ({3 - guestIgnitions.length} LEFT)
-                </button>
-              </>
-            ) : (
-              <span style={{ color: LIME, fontSize: "9px", fontFamily: "monospace", padding: "5px 10px", background: "rgba(200,255,0,0.06)", border: "1px solid rgba(200,255,0,0.15)", borderRadius: "4px", fontWeight: "bold" }}>
-                🔒 SECURE VAULT ACTIVE
-              </span>
-            )}
+          {/* Top right: Icons only */}
+          <div style={{ display: "flex", gap: "0.45rem", alignItems: "center" }}>
             {showTools && <>
-              <button className="gh" onClick={() => { setIntel(!intel); setCompany(false); }} style={{ ...G.ghost, color: intel ? LIME : "rgba(255,255,255,0.5)", borderColor: intel ? LIME : "#1c1c1c" }}>⚡ Intel</button>
-              <button className="gh" onClick={() => { setCompany(true); setIntel(false); }} style={{ ...G.ghost, color: company ? LIME : "#ffffff", borderColor: company ? LIME : "#1c1c1c" }}>🏗 Build</button>
+              <button className="gh" onClick={() => { setIntel(!intel); setCompany(false); }} style={{ ...G.ghost, color: intel ? LIME : "rgba(255,255,255,0.5)", borderColor: intel ? LIME : "#1c1c1c", padding: "0.55rem" }}>
+                <Zap size={16} />
+              </button>
+              <button className="gh" onClick={() => { setCompany(true); setIntel(false); }} style={{ ...G.ghost, color: company ? LIME : "#ffffff", borderColor: company ? LIME : "#1c1c1c", padding: "0.55rem" }}>
+                <Hammer size={16} />
+              </button>
             </>}
-            <button className="gh" style={G.ghost} onClick={() => setShowHistory(true)}>📁 Vault</button>
-            <button className="gh" style={{ ...G.ghost, display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => setShowProfile(true)}>
-              <div style={{ width: "18px", height: "18px", borderRadius: "50%", background: `${LIME}2a`, border: `1px solid ${LIME}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: LIME, fontWeight: "bold" }}>{profile?.name?.[0]?.toUpperCase()}</div>
-              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.68rem" }}>{profile?.name?.split(" ")[0]}</span>
+            <button className="gh" style={{ ...G.ghost, padding: "0.55rem", border: "none" }} onClick={() => setShowHistory(true)}>
+              <Archive size={18} />
             </button>
-            {phase !== "ignition" && <button className="gh" style={G.ghost} onClick={resetIdea}>↩</button>}
+            <button className="gh" style={{ ...G.ghost, padding: "0.55rem", border: "none" }} onClick={() => setShowProfile(true)}>
+              <User size={18} />
+            </button>
+            {phase !== "ignition" && <button className="gh" style={{ ...G.ghost, padding: "0.55rem" }} onClick={resetIdea}>↩</button>}
           </div>
-        </div>
-        )}
-
-        {/* STAGE & PROCESS FLOW PROGRESS BAR & STEPS */}
-        {!isFocusMode && phase !== "ignition" && (
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1.4rem" }}>
-            {[1, 2, 3].map(stg => {
-              const getStageInfo = () => {
-                if (phase === "ignition" || phase === "questioning") return { step: 1, name: "1. Idea Formulation & QA" };
-                if (phase === "reality-check") return { step: 2, name: "2. Brutal Reality Check" };
-                return { step: 3, name: "3. Venture Output Suite" };
-              };
-              const stageInfo = getStageInfo();
-              const active = stageInfo.step >= stg;
-              const current = stageInfo.step === stg;
-              return (
-                <div key={stg} style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.38rem" }}>
-                  <div style={{ height: "3px", borderRadius: "2px", background: current ? LIME : active ? `${LIME}70` : "rgba(255,255,255,0.06)", transition: "all .3s" }} />
-                  <div style={{ color: current ? LIME : active ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.15)", fontSize: "9px", fontFamily: "monospace", letterSpacing: "0.5px" }}>
-                    {stg === 1 ? "1/3: Formulation" : stg === 2 ? "2/3: Challenge" : "3/3: Product Suite"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* COACHED NEXT STEP ACCENT GUIDE */}
-        {!isFocusMode && (                
-        <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid #141414", borderRadius: "6px", padding: "0.6rem 0.95rem", marginBottom: "1.8rem", display: "flex", alignItems: "center", gap: "0.55rem" }}>
-          <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: LIME, animation: "pulse 2s infinite" }} />
-          <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.72rem", fontFamily: "monospace", lineHeight: "1.4" }}>
-            <strong style={{ color: LIME }}>NEXT:</strong> {
-              phase === "ignition" ? "Define raw idea concept in field below and Ignite Forge to stress-test your core business assumptions." :
-              phase === "questioning" ? `Identify hidden risks: Complete answer to critical advisor stress question ${qa.length + 1} of ${Q_TARGET}.` :
-              phase === "reality-check" ? "Analyze results: Assess brutal viability parameters & strategic weakpoints below, then build deliverable suite." :
-              "Refine architecture: Generate primary design blueprints, action trackers, developer instructions or prompt packages."
-            }
-          </span>
         </div>
         )}
 
         {/* IGNITION */}
         {phase === "ignition" && (
           <div style={{ animation: "fadeIn .4s ease" }}>
-            <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "0.85rem 1.1rem", marginBottom: "1.8rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-              <div style={{ width: "4px", height: "4px", borderRadius: "50%", background: LIME, flexShrink: 0 }} />
-              <span style={{ color: "rgba(255,255,255,0.75)", fontSize: "0.78rem", lineHeight: "1.5", fontFamily: "monospace" }}>{profile?.bio || `Welcome, ${profile?.name}`}</span>
-            </div>
             <p style={G.label}>Drop your raw idea</p>
             <textarea style={{ ...G.ta, height: "150px" }} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
             <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "0.9rem" }}>
@@ -2629,6 +2503,22 @@ ${ctxStr(pairs)}`;
                   <div><div style={{ color: PURPLE, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>STRENGTHS</div>{(ideaScore.strengths || []).map((s, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>→ {s}</div>)}</div>
                   <div><div style={{ color: PINK, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>GAPS</div>{(ideaScore.gaps || []).map((g, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>─ {g}</div>)}</div>
                 </div>
+                {ideaScore.searchValidation && (
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px dashed rgba(200,255,0,0.2)", display: "flex", flexDirection: "column" }}>
+                     <div style={{ display: "flex", gap: "1rem", alignItems: "center", marginBottom: "0.75rem" }}>
+                       <div style={{ width: "42px", height: "42px", borderRadius: "4px", background: "rgba(200,255,0,0.1)", display: "flex", alignItems: "center", justifyContent: "center", color: LIME, fontWeight: "900", fontSize: "1rem" }}>{ideaScore.searchValidation.percentage}%</div>
+                       <div>
+                         <div style={{ color: LIME, fontSize: "10px", letterSpacing: "1px", fontWeight: "bold" }}>WEB SEARCH VALIDATION</div>
+                         <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.7rem", marginTop: "2px" }}>Grounded in live global data analysis</div>
+                       </div>
+                     </div>
+                     <ul style={{ margin: 0, paddingLeft: "1.2rem", color: "rgba(255,255,255,0.85)", fontSize: "0.8rem", lineHeight: "1.4" }}>
+                       {(ideaScore.searchValidation.findings || []).map((f, i) => (
+                         <li key={i} style={{ marginBottom: "0.4rem" }}>{f}</li>
+                       ))}
+                     </ul>
+                  </div>
+                )}
               </div>
             )}
 

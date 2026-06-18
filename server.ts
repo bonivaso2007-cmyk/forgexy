@@ -68,6 +68,23 @@ async function startServer() {
   });
 
   // API Route: Groq Streaming Proxy
+  app.post("/api/search", async (req, res) => {
+    try {
+      const q = req.body.q;
+      if (!q) return res.json({ snippets: [] });
+      // Use robust Wikipedia API for validation roaming
+      const wikiRes = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&utf8=&format=json`).then(r => r.json());
+      
+      const snippets = (wikiRes.query?.search || []).map((item: any) => 
+        item.title + ": " + item.snippet.replace(/<\/?[^>]+(>|$)/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+      ).slice(0, 5);
+      
+      res.json({ snippets });
+    } catch(e) { 
+      res.json({ snippets: [] }); 
+    }
+  });
+
   app.post("/api/groq-proxy", async (req, res) => {
     const { messages, max_tokens, system } = req.body;
     
@@ -88,7 +105,7 @@ async function startServer() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
+                model: req.body.model || "llama-3.1-8b-instant",
                 messages: groqMessages,
                 max_completion_tokens: max_tokens || 1024,
                 temperature: 1,
@@ -131,9 +148,9 @@ async function startServer() {
         }
         res.write("data: [DONE]\n");
         res.end();
-    } catch (e) {
+    } catch (e: any) {
         console.error("Groq proxy error:", e);
-        res.status(500).json({ error: "Groq proxy error" });
+        res.status(500).json({ error: e.message || "Groq proxy error" });
     }
   });
 
@@ -198,7 +215,7 @@ async function startServer() {
         config.tools = [{ googleSearch: {} }];
       }
 
-      // Call Gemini 3.5 Flash streaming API (or custom specified model)
+      // Call Gemini streaming API (or custom specified model)
       const streamResponse = await ai.models.generateContentStream({
         model: "gemini-3.5-flash",
         contents: userPrompt,
@@ -216,8 +233,8 @@ async function startServer() {
       res.write("data: [DONE]\n");
       res.end();
     } catch (error: any) {
-      console.error("Gemini SDK streaming error:", error);
-      res.write(`data: ${JSON.stringify({ delta: { text: `\nError calling Gemini: Request blocked or model busy.` } })}\n`);
+      console.error("Gemini SDK streaming error:", error.message || error);
+      res.write(`data: ${JSON.stringify({ delta: { text: `\nError calling Gemini: ${error.message || "Request blocked or model busy."}` } })}\n`);
       res.write("data: [DONE]\n");
       res.end();
     }

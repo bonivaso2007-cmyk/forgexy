@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "kvElement": {
+      "title": "Key-Value Store Element",
+      "description": "Represents a dynamically structured KV store entry",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "string" }
+      },
+      "required": ["key", "value"]
+    },
+    "userProfile": {
+      "title": "User Profile",
+      "description": "Founder profile information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "stage": { "type": "string" },
+        "techLevel": { "type": "string" },
+        "bio": { "type": "string" },
+        "incomplete": { "type": "boolean" },
+        "completedAt": { "type": "number" }
+      },
+      "required": ["name"]
+    },
+    "idea": {
+      "title": "Startup Idea",
+      "description": "Idea tested in Forge",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_uid": { "type": "string" },
+        "text": { "type": "string" },
+        "score": { "type": "number" },
+        "label": { "type": "string" },
+        "qa": { "type": "string" },
+        "savedAt": { "type": "number" }
+      },
+      "required": ["id", "user_uid", "text", "savedAt"]
+    }
+  },
+  "firestore": {
+    "kv_store/{key}": {
+      "schema": "kvElement",
+      "description": "Generic store for user and session data"
+    },
+    "profiles/{userId}": {
+      "schema": "userProfile",
+      "description": "Profiles separated by userId"
+    },
+    "ideas/{ideaId}": {
+      "schema": "idea",
+      "description": "Stored ideas"
+    }
+  }
+}
