@@ -72,24 +72,163 @@ async function startServer() {
     try {
       const q = req.body.q;
       if (!q) return res.json({ snippets: [] });
-      // Use robust Wikipedia API for validation roaming
-      const wikiRes = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&utf8=&format=json`).then(r => r.json());
-      
-      const snippets = (wikiRes.query?.search || []).map((item: any) => 
-        item.title + ": " + item.snippet.replace(/<\/?[^>]+(>|$)/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-      ).slice(0, 5);
-      
-      res.json({ snippets });
+
+      let snippets: string[] = [];
+
+      // LAYER 1: DuckDuckGo HTML Scraper (live internet results)
+      try {
+        const ddgUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+        const html = await fetch(ddgUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+          }
+        }).then(r => r.text());
+
+        const titleMatches = [...html.matchAll(/<a[^>]*class=["']result__a["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+        const snippetMatches = [...html.matchAll(/<a[^>]*class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>/gi)];
+
+        for (let i = 0; i < Math.min(titleMatches.length, snippetMatches.length); i++) {
+          const href = titleMatches[i][1];
+          const rawTitle = titleMatches[i][2];
+          const rawSnippet = snippetMatches[i][1];
+
+          const title = rawTitle.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+          const snippet = rawSnippet.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+
+          let url = href;
+          if (href.includes("uddg=")) {
+            const parts = href.split("uddg=");
+            if (parts[1]) {
+              const actualUrl = parts[1].split("&")[0];
+              try {
+                url = decodeURIComponent(actualUrl);
+              } catch {
+                url = actualUrl;
+              }
+            }
+          }
+
+          if (title && snippet) {
+            snippets.push(`[${title}] (${url}) - ${snippet}`);
+          }
+        }
+      } catch (ddgHtmlError) {
+        console.warn("DDG HTML search failed, trying DDG API:", ddgHtmlError);
+      }
+
+      // LAYER 2: DuckDuckGo Instant Answer API Fallback
+      if (snippets.length === 0) {
+        try {
+          const ddgApiUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json`;
+          const apiRes = await fetch(ddgApiUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            }
+          }).then(r => r.json());
+
+          if (apiRes.AbstractText) {
+            snippets.push(`[${apiRes.Heading || q}] (${apiRes.AbstractURL || ""}) - ${apiRes.AbstractText}`);
+          }
+
+          if (apiRes.RelatedTopics && Array.isArray(apiRes.RelatedTopics)) {
+            for (const topic of apiRes.RelatedTopics) {
+              if (topic.Text && topic.FirstURL) {
+                snippets.push(`[Topic] (${topic.FirstURL}) - ${topic.Text}`);
+              } else if (topic.Topics && Array.isArray(topic.Topics)) {
+                for (const sub of topic.Topics) {
+                  if (sub.Text && sub.FirstURL) {
+                    snippets.push(`[Topic] (${sub.FirstURL}) - ${sub.Text}`);
+                  }
+                }
+              }
+            }
+          }
+        } catch (ddgApiError) {
+          console.warn("DDG API search failed, moving to Wikipedia:", ddgApiError);
+        }
+      }
+
+      // LAYER 3: Wikipedia Semantic Search Fallback
+      if (snippets.length === 0) {
+        try {
+          const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&utf8=&format=json`;
+          const wikiRes = await fetch(wikiUrl).then(r => r.json());
+          const wikiSearch = wikiRes.query?.search || [];
+
+          snippets = wikiSearch.map((item: any) => {
+            const cleanTitle = item.title;
+            const cleanSnippet = item.snippet.replace(/<\/?[^>]+(>|$)/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").trim();
+            const wikiArticleUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(cleanTitle.replace(/\s+/g, "_"))}`;
+            return `[Wikipedia: ${cleanTitle}] (${wikiArticleUrl}) - ${cleanSnippet}`;
+          });
+        } catch (wikiError) {
+          console.warn("Wikipedia search failed:", wikiError);
+        }
+      }
+
+      // Limit results to maximum 6 highly relevant entries
+      res.json({ snippets: snippets.slice(0, 6) });
     } catch(e) { 
       res.json({ snippets: [] }); 
     }
   });
 
+  async function streamGeminiFallback(res: any, system: string, messages: any[], max_tokens?: number) {
+    try {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+
+      if (!apiKey) {
+        res.write(`data: ${JSON.stringify({ delta: { text: "\n[Fallback Error]: GEMINI_API_KEY is not configured in Settings." } })}\n`);
+        res.write("data: [DONE]\n");
+        res.end();
+        return;
+      }
+
+      let userPrompt = "Hello";
+      if (messages && messages.length > 0) {
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && typeof lastMsg.content === "string") {
+          userPrompt = lastMsg.content;
+        }
+      }
+
+      const config: any = {
+        systemInstruction: system || "You are FORGE, an AI Idea Engine for Founders.",
+        maxOutputTokens: max_tokens || 1400,
+        temperature: 0.7,
+      };
+
+      const streamResponse = await ai.models.generateContentStream({
+        model: "gemini-3.5-flash",
+        contents: userPrompt,
+        config: config,
+      });
+
+      for await (const chunk of streamResponse) {
+        const text = chunk.text;
+        if (text) {
+          res.write(`data: ${JSON.stringify({ delta: { text } })}\n`);
+        }
+      }
+      res.write("data: [DONE]\n");
+      res.end();
+    } catch (err: any) {
+      console.error("Gemini fallback failed:", err);
+      res.write(`data: ${JSON.stringify({ delta: { text: `\n[Fallback Error]: ${err.message || "Request blocked or model busy."}` } })}\n`);
+      res.write("data: [DONE]\n");
+      res.end();
+    }
+  }
+
   app.post("/api/groq-proxy", async (req, res) => {
     const { messages, max_tokens, system } = req.body;
     
     if (!process.env.GROQ_API_KEY) {
-        return res.status(500).json({ error: "GROQ_API_KEY not configured" });
+        console.warn("GROQ_API_KEY not configured. Falling back to Gemini stream.");
+        return streamGeminiFallback(res, system, messages, max_tokens);
     }
 
     try {
@@ -114,7 +253,8 @@ async function startServer() {
         });
         
         if (!response.ok) {
-            throw new Error(`Groq API error ${response.status}`);
+            console.warn(`Groq API returned status ${response.status}. Falling back to Gemini stream.`);
+            return streamGeminiFallback(res, system, messages, max_tokens);
         }
 
         res.setHeader("Content-Type", "text/event-stream");
