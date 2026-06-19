@@ -367,7 +367,7 @@ const store = {
 };
 
 // ── API ───────────────────────────────────────────────────
-import { aiStream, ai, geminiAi, geminiStream } from "./lib/ai";
+import { aiStream, ai, geminiAi, geminiStream, trackEvent } from "./lib/ai";
 
 // ── Firebase Auth ─────────────────────────────────────────
 
@@ -979,14 +979,14 @@ function MindMap({ data, onDeepDive }) {
 
   useEffect(() => { const el = svgRef.current; if (!el) return; el.addEventListener("wheel", onWheel, { passive: false }); return () => el.removeEventListener("wheel", onWheel); }, []);
 
-  const containerStyle = isFullscreen 
+  const containerStyle: React.CSSProperties = isFullscreen 
     ? { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99999, background: "#050505", display: "flex", flexDirection: "column" } 
     : { position: "relative", background: "#050505", border: "1px solid #1c1c1c", borderRadius: "6px", overflow: "hidden", height: "450px" };
 
   return (
     <div style={containerStyle}>
       <div style={{ position: "absolute", top: "10px", right: "10px", display: "flex", gap: "5px", zIndex: 10 }}>
-        {([["＋", () => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))], ["－", () => setTransform(t => ({ ...t, scale: Math.max(t.scale * 0.83, 0.3) }))], ["⊡", () => setTransform({ x: 0, y: 0, scale: 0.75 })], ["↺", () => setTransform({ x: 0, y: 0, scale: 1 })], [isFullscreen ? "↙" : "⤢", () => setIsFullscreen(!isFullscreen)]
+        {([["＋", () => setTransform(t => ({ ...t, scale: Math.min(t.scale * 1.2, 3) }))], ["－", () => setTransform(t => ({ ...t, scale: Math.max(t.scale * 0.83, 0.3) }))], ["⊡", () => setTransform({ x: 0, y: 0, scale: 0.75 })], ["↺", () => setTransform({ x: 0, y: 0, scale: 1 })], [isFullscreen ? "↙" : "⤢", () => { trackEvent("mindmap_fullscreen_toggled", "mindmap", isFullscreen ? "off" : "on"); setIsFullscreen(!isFullscreen); }]
         ] as [string, () => void][]).map(([l, a], i) => (
           <button key={i} onClick={a} title={l === "⤢" ? "Full Screen" : l === "↙" ? "Collapse" : ""} style={{ background: "#0c0c0c", border: "1px solid #1c1c1c", color: "rgba(255,255,255,0.4)", borderRadius: "6px", width: "26px", height: "26px", cursor: "pointer", fontSize: "0.8rem", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", transition: "all .15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = LIME; e.currentTarget.style.color = LIME; }} onMouseLeave={e => { e.currentTarget.style.borderColor = "#1c1c1c"; e.currentTarget.style.color = "rgba(255,255,255,0.4)"; }}>{l}</button>
         ))}
@@ -995,7 +995,7 @@ function MindMap({ data, onDeepDive }) {
         <div style={{ position: "absolute", bottom: "10px", right: "10px", background: "#0c0c0c", border: `1px solid #1c1c1c`, borderRadius: "6px", padding: "0.6rem 0.8rem", zIndex: 10, display: "flex", flexDirection: "column", gap: "0.35rem", maxWidth: "240px" }}>
           <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.55rem", letterSpacing: "2px", textTransform: "uppercase" }}>SELECTED CONCEPT</div>
           <div style={{ color: "#ffffff", fontSize: "0.78rem", fontFamily: "monospace", fontWeight: "bold", wordBreak: "break-all" }}>{selected}</div>
-          <button onClick={() => { setIsFullscreen(false); onDeepDive(`Research and explain this mind map node or section: "${selected}" in relation to my startup idea "${safeData.center || "Idea"}". Describe how to validate it, potential competitors, or technical execution paths.`); }} style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "4px 8px", fontSize: "9px", fontWeight: "bold", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase" }}>
+          <button onClick={() => { trackEvent("mindmap_node_researched", "mindmap", selected); setIsFullscreen(false); onDeepDive(`Research and explain this mind map node or section: "${selected}" in relation to my startup idea "${safeData.center || "Idea"}". Describe how to validate it, potential competitors, or technical execution paths.`); }} style={{ background: LIME, color: "#000", border: "none", borderRadius: "4px", padding: "4px 8px", fontSize: "9px", fontWeight: "bold", cursor: "pointer", fontFamily: "monospace", textTransform: "uppercase" }}>
             ⚡ RESEARCH NODE
           </button>
         </div>
@@ -1735,6 +1735,7 @@ export default function App() {
       currentAnalytics.sessionCount = (currentAnalytics.sessionCount || 0) + 1;
       await store.set("forge_analytics", currentAnalytics);
       setAnalytics(currentAnalytics);
+      trackEvent("app_loaded", "lifecycle", "v1.0");
 
       const session = await store.get("session");
       if (!session) {
@@ -1891,6 +1892,7 @@ export default function App() {
       // We use our proxy search feature to find recent validation data online!
       const s = await ai(`You are FORGE VALIDATION ENGINE. Score this startup idea and use provided LIVE WEB DATA to validate the market. JSON only format: {"score":75,"label":"Solid","verdict":"brutal one sentence","strengths":["s1","s2"],"gaps":["g1","g2"],"searchValidation":{"percentage":82,"findings":["Searched fact 1","Searched fact 2"]}} Labels:Weak/Needs Work/Solid/Strong/Exceptional. Be factual.`, `${profileContext(profile)}\nIdea:"${idea}"\n${ctxStr(pairs)}`, true, 1000, 2, "market validation competitors for: " + idea);
       setIdeaScore(s);
+      trackEvent("reality_check_scored", "validation", s.label, s.score);
       
       const currentAnalytics = await store.get("forge_analytics") || { sessionCount: 0, realityCheckCount: 0 };
       currentAnalytics.realityCheckCount = (currentAnalytics.realityCheckCount || 0) + 1;
@@ -2059,14 +2061,17 @@ ${ctxStr(pairs)}`;
 
   const generate = async (type) => {
     if (outputs[type]) { setOutType(type); setPhase("output"); return; }
+    trackEvent("generate_output_started", "intelligence", type);
     setOutType(type); setPhase("generating"); setErr("");
     setLoadMsg(`Forging ${OUTPUTS.find(o => o.key === type)?.label}…`);
     const cfg = CONFIGS[type];
     try {
       const result = await ai(cfg.sys, cfg.usr(idea, ctxStr(qa), profile), true, 1400, 2, true);
       setOutputs(prev => ({ ...prev, [type]: result }));
+      trackEvent("generate_output_success", "intelligence", type);
       setPhase("output");
-    } catch (e) { 
+    } catch (e: any) { 
+      trackEvent("generate_output_failed", "intelligence", `${type}: ${e.message}`);
       setErr(`Failed: ${e.message}`); 
       setPhase("output-select"); 
       setGlobalError("Couldn't reach the engine. Try again in a moment.");

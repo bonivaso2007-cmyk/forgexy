@@ -113,3 +113,19 @@ export async function ai(sys: string, usr: string, asJSON = false, maxTok = 1400
     } catch (e) { if (i === retries) throw e; await new Promise(r => setTimeout(r, 400 * (i + 1))); }
   }
 }
+
+export function trackEvent(action: string, category: string, label?: string, value?: number) {
+  try {
+    if (typeof window !== "undefined" && (window as any).gtag) {
+      (window as any).gtag("event", action, {
+        event_category: category,
+        event_label: label,
+        value: value,
+      });
+      console.log(`[Google Analytics TrackedEvent]: ${action} (${category})`, { label, value });
+    }
+  } catch (error) {
+    console.error("[Google Analytics track error]:", error);
+  }
+}
+
