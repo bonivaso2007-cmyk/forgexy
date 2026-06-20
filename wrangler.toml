@@ -1,8 +1,11 @@
 # Cloudflare Pages / Workers Deployment Configuration
 # Build for the globe with edge functions
-# wrangler.toml
-name = 'forgexy'
+name = "forge-idea-engine"
 pages_build_output_dir = "./dist"
+compatibility_date = "2026-06-20"
+
+[assets]
+directory = "./dist"
 
 [vars]
 # Ensure you attach these secrets in your Cloudflare dashboard under pages configuration:
