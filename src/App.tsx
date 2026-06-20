@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Component, ErrorInfo, ReactNode } from "react";
-import { Archive, User, Zap, Hammer } from "lucide-react";
+import { Archive, User, Zap, Hammer, Globe, ArrowLeft } from "lucide-react";
 import DOMPurify from "dompurify";
 import PitchDeck from "./components/PitchDeck";
 import CommandPalette from "./components/CommandPalette";
+import { exportComponentToPDF } from "./lib/pdfExporter";
 import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
 import { auth as firebaseAuth, googleProvider, db, handleFirestoreError, OperationType } from "./lib/firebase";
 import { 
@@ -627,11 +628,30 @@ function AuthScreen({ onAuth }) {
 }
 
 // ── ONBOARDING ────────────────────────────────────────────
-function Onboarding({ user, onDone }) {
+function Onboarding({ user, onDone, appLanguage = "en" }) {
   const steps = [
-    { key: "country", label: "What country is your startup based in?", placeholder: "e.g. Tanzania, India, United States", type: "input" },
-    { key: "stage", label: "What stage is your venture at?", type: "choice", options: ["Just an idea", "Research phase", "Building MVP", "Have early users", "Revenue stage"] },
-    { key: "techLevel", label: "What is your level of technical execution?", type: "choice", options: ["Non-technical", "Basic (vibe coder)", "Intermediate", "Advanced developer"] },
+    { 
+      key: "country", 
+      label: appLanguage === "sw" ? "Startup yako iko katika nchi gani?" : "What country is your startup based in?", 
+      placeholder: appLanguage === "sw" ? "mfano. Tanzania, Kenya, Uganda" : "e.g. Tanzania, India, United States", 
+      type: "input" 
+    },
+    { 
+      key: "stage", 
+      label: appLanguage === "sw" ? "Mradi wako uko katika hatua gani?" : "What stage is your venture at?", 
+      type: "choice", 
+      options: appLanguage === "sw" 
+        ? ["Ni wazo tu", "Hatua ya utafiti", "Kutengeneza bidhaa ya kwanza (MVP)", "Kupata watumiaji wa kwanza", "Hatua ya mapato"]
+        : ["Just an idea", "Research phase", "Building MVP", "Have early users", "Revenue stage"] 
+    },
+    { 
+      key: "techLevel", 
+      label: appLanguage === "sw" ? "Kiwango chako cha utekelezaji wa kiteknolojia ni kipi?" : "What is your level of technical execution?", 
+      type: "choice", 
+      options: appLanguage === "sw"
+        ? ["Sio wa kiufundi (Non-technical)", "Kiwango cha msingi", "Kiwango cha kati", "Msanidi programu mtaalamu"]
+        : ["Non-technical", "Basic (vibe coder)", "Intermediate", "Advanced developer"] 
+    },
   ];
 
   const [step, setStep] = useState(0);
@@ -733,11 +753,11 @@ function Onboarding({ user, onDone }) {
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
           <button onClick={next} disabled={!val.trim() || loading}
             style={{ flex: 1, background: LIME, color: "#1B1815", border: "none", borderRadius: "6px", padding: "0.85rem 2rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2.5px", cursor: !val.trim() ? "not-allowed" : "pointer", fontFamily: "monospace", opacity: !val.trim() ? 0.25 : 1 }}>
-            {loading ? "SAVING…" : step === steps.length - 1 ? "ENTER FORGE SYSTEM →" : "NEXT →"}
+            {loading ? t("save", appLanguage) : step === steps.length - 1 ? t("enter", appLanguage) : t("next", appLanguage)}
           </button>
           {step > 0 && (
             <button onClick={back} style={{ background: "transparent", color: "rgba(244, 239, 227, 0.6)", border: "1px solid #2E2A24", borderRadius: "6px", padding: "0.85rem 1.2rem", fontSize: "11px", cursor: "pointer", fontFamily: "monospace" }}>
-              ← BACK
+              ← {t("back", appLanguage)}
             </button>
           )}
         </div>
@@ -872,10 +892,10 @@ function HistoryPanel({ uid, onLoad, onClose }) {
 }
 
 // ── REALITY CHECK ─────────────────────────────────────────
-function RealityCheck({ idea, qa, profile, onProceed, onBack }) {
+function RealityCheck({ idea, qa, profile, onProceed, onBack, appLanguage = "en" }) {
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(true);
-  const [talked, setTalked] = useState(null);
+  const [talked, setTalked] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -894,21 +914,36 @@ function RealityCheck({ idea, qa, profile, onProceed, onBack }) {
         ? `\n\n### Living Co-Founder Memory (Key startup parameters, constraints & previous decisions):\n${memories.map((m, idx) => `${idx + 1}. ${m}`).join("\n")}`
         : "";
 
-      const sys = `You are FORGE REALITY CHECK — a brutal, honest advisor for early-stage founders.
+      const langName = getLangName(appLanguage);
+      let sys = `You are FORGE REALITY CHECK — a brutal, honest advisor for early-stage founders.
 Analyse this idea against the founder's specific constraints. Be direct. No sugarcoating.
 Structure: ## Feasibility Score (X/10)\n## Can You Actually Build This?\n## Market Reality Check\n## Your Unfair Advantage\n## The Single Biggest Risk\n## Verdict`;
+
+      if (appLanguage !== "en") {
+        sys += `\n\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST write your entire response, including all section headings (such as "Feasibility Score", "Can You Actually Build This?", "Market Reality Check", "Your Unfair Advantage", "The Single Biggest Risk", "Verdict") and all paragraphs/verdicts completely in ${langName}. Do NOT use English under any circumstances.`;
+      }
+
       const prompt = `${profileContext(profile)}\n${marketContext(profile)}${memoriesPart}\n\nIdea: "${idea}"\n\nFounder's thinking:\n${qa.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n")}\n\nGive a reality check tailored to THIS specific founder's constraints, location, and past co-founder memory files.`;
       
       await aiStream(sys, prompt, chunk => setResult(chunk), 1000, true);
       setLoading(false);
     })();
-  }, []);
+  }, [appLanguage]);
+
+  const spokeLabel = t("speak_customer", appLanguage);
+  const yesBtnLabel = t("yes_spoken", appLanguage);
+  const noBtnLabel = t("not_yet", appLanguage);
+  const warningText = t("warning_spoken", appLanguage);
+  const runningText = t("running_reality", appLanguage);
+  const completeText = t("reality_complete", appLanguage);
+  const buildBtnLabel = t("build_outputs", appLanguage);
+  const backBtnLabel = t("back", appLanguage);
 
   return (
     <div style={{ animation: "fadeIn .3s ease", fontFamily: "monospace" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.8rem" }}>
         <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: loading ? PURPLE : LIME, animation: loading ? "pulse 1s infinite" : "none", flexShrink: 0 }} />
-        <span style={{ color: loading ? PURPLE : LIME, fontSize: "0.68rem", letterSpacing: "3px", fontWeight: "bold" }}>{loading ? "RUNNING REALITY CHECK…" : "REALITY CHECK COMPLETE"}</span>
+        <span style={{ color: loading ? PURPLE : LIME, fontSize: "0.68rem", letterSpacing: "3px", fontWeight: "bold" }}>{loading ? runningText : completeText}</span>
       </div>
       <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.5rem", marginBottom: "1.5rem" }}>
         <Md text={result} />
@@ -916,21 +951,21 @@ Structure: ## Feasibility Score (X/10)\n## Can You Actually Build This?\n## Mark
       {!loading && (
         <>
           <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.2rem", marginBottom: "1.5rem" }}>
-            <p style={{ color: "#ffffff", fontSize: "0.9rem", margin: "0 0 1rem", fontFamily: "monospace", fontWeight: "bold" }}>Have you spoken to at least one real potential customer about this idea?</p>
+            <p style={{ color: "#ffffff", fontSize: "0.9rem", margin: "0 0 1rem", fontFamily: "monospace", fontWeight: "bold" }}>{spokeLabel}</p>
             <div style={{ display: "flex", gap: "0.75rem" }}>
-              {["Yes, I have", "Not yet"].map(o => {
-                const sel = talked === o;
+              {[yesBtnLabel, noBtnLabel].map(o => {
+                const sel = (o === yesBtnLabel && talked === "yes") || (o === noBtnLabel && talked === "no");
                 return (
-                  <button key={o} onClick={() => setTalked(o)} style={{ flex: 1, background: sel ? `${LIME}0d` : "transparent", border: `1px solid ${sel ? LIME : "#1c1c1c"}`, borderRadius: "6px", padding: "0.75rem", color: sel ? LIME : "rgba(255,255,255,0.4)", fontFamily: "monospace", fontSize: "0.82rem", cursor: "pointer", transition: "all .15s" }}>{o}</button>
+                  <button key={o} onClick={() => setTalked(o === yesBtnLabel ? "yes" : "no")} style={{ flex: 1, background: sel ? `${LIME}0d` : "transparent", border: `1px solid ${sel ? LIME : "#1c1c1c"}`, borderRadius: "6px", padding: "0.75rem", color: sel ? LIME : "rgba(255,255,255,0.4)", fontFamily: "monospace", fontSize: "0.82rem", cursor: "pointer", transition: "all .15s" }}>{o}</button>
                 );
               })}
             </div>
-            {talked === "Not yet" && <p style={{ color: PINK, fontSize: "0.75rem", marginTop: "0.75rem", lineHeight: "1.6" }}>⚠ No real conversations = unvalidated assumptions. The outputs will still generate but treat them as hypotheses, not facts. Your #1 action after this: talk to one real person.</p>}
+            {talked === "no" && <p style={{ color: PINK, fontSize: "0.75rem", marginTop: "0.75rem", lineHeight: "1.6" }}>{warningText}</p>}
           </div>
           {talked && (
             <div style={{ display: "flex", gap: "0.75rem" }}>
-              <button onClick={onProceed} style={{ background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.82rem 1.8rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "monospace" }}>BUILD OUTPUTS →</button>
-              <button onClick={onBack} style={{ background: "transparent", color: "rgba(255, 255, 255, 0.5)", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "0.82rem 1.2rem", fontSize: "11px", cursor: "pointer", fontFamily: "monospace" }}>← BACK</button>
+              <button onClick={onProceed} style={{ background: LIME, color: "#050505", border: "none", borderRadius: "6px", padding: "0.82rem 1.8rem", fontSize: "11px", fontWeight: "900", letterSpacing: "2px", cursor: "pointer", fontFamily: "monospace" }}>{buildBtnLabel}</button>
+              <button onClick={onBack} style={{ background: "transparent", color: "rgba(255, 255, 255, 0.5)", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "0.82rem 1.2rem", fontSize: "11px", cursor: "pointer", fontFamily: "monospace" }}>← {backBtnLabel}</button>
             </div>
           )}
         </>
@@ -1314,7 +1349,7 @@ function SWOT({ data, onDeepDive }) {
 }
 
 // ── COMPANY BUILDER & INTEL (compact) ─────────────────────
-function CompanyBuilder({ idea, qaCtx, profile, onClose }) {
+function CompanyBuilder({ idea, qaCtx, profile, onClose, appLanguage = "en" }) {
   const [step, setStep] = useState("pick");
   const [mode, setMode] = useState(null);
   const [bg, setBg] = useState("");
@@ -1327,7 +1362,11 @@ function CompanyBuilder({ idea, qaCtx, profile, onClose }) {
   const build = async () => {
     setStep("result"); setLoading(true); setResult(""); setDone(false);
     const modeCtx = mode === "scratch" ? "Starting from zero." : `Insider background: "${bg}"`;
-    const sys = `You are FORGE SYSTEMS. McKinsey meets YC. Specific, ruthless, no filler. ## headers. → bullets.`;
+    const langName = getLangName(appLanguage);
+    let sys = `You are FORGE SYSTEMS. McKinsey meets YC. Specific, ruthless, no filler. ## headers. → bullets.`;
+    if (appLanguage !== "en") {
+      sys += `\n\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST write your entire response, including all section headings (like Company Architecture, Core Systems, Workflow Design, Hiring Sequence, Revenue Operations, Tech Stack, Growth Levers, 90-Day Plan, Critical Failure Points) and all explanation bullets completely in ${langName}. Do NOT use English under any circumstances.`;
+    }
     const prompt = `${profileContext(profile)}\n${marketContext(profile)}\n\nIdea:"${idea}"\n${qaCtx}\n\nContext:${modeCtx}\n\n## 1. Company Architecture\n## 2. Core Systems\n## 3. Workflow Design\n## 4. Hiring Sequence\n## 5. Revenue Operations\n## 6. Tech Stack (exact tools for this market)\n## 7. Growth Levers\n## 8. 90-Day Plan\n## 9. Critical Failure Points`;
     try { await aiStream(sys, prompt, chunk => setResult(chunk), 1600, true); } catch (e) { setResult(`Error: ${e.message}`); }
     setLoading(false); setDone(true);
@@ -1369,13 +1408,32 @@ function CompanyBuilder({ idea, qaCtx, profile, onClose }) {
   );
 }
 
-function IntelPanel({ idea, profile, onClose, initialQuery, onQueryHandled }) {
-  const [msgs, setMsgs] = useState([{ role: "assistant", content: `## FORGE INTEL\n\nLive AI research. Ask me:\n\n→ Market size and real numbers\n→ Competitors in this space\n→ Regulations for your market\n→ Funding landscape\n→ Tech options for your constraints` }]);
+function IntelPanel({ idea, profile, onClose, initialQuery, onQueryHandled, appLanguage = "en" }) {
+  const getGreeting = (lang: string) => {
+    switch (lang) {
+      case "sw": return `## FORGE MAARIFA\n\nUtafiti wa soko la moja kwa moja wa AI. Niulize:\n\n→ Ukubwa wa soko na idadi halisi\n→ Washindani katika sekta hii\n→ Sheria na kanuni za soko lako\n→ Mazingira ya ufadhili\n→ Chaguzi za teknolojia kwa changamoto zako`;
+      case "es": return `## CEREBRO FORGE\n\nInvestigación de mercado en vivo por IA. Pregúntame:\n\n→ Tamaño de mercado y cifras reales\n→ Competidores en este espacio\n→ Regulaciones para tu mercado\n→ Panorama de financiación\n→ Opciones tecnológicas para tus restricciones`;
+      case "fr": return `## INFOS FORGE\n\nRecherche de marché en direct par IA. Demandez-moi:\n\n→ Taille du marché et chiffres réels\n→ Concurrents dans cet espace\n→ Réglementations pour votre marché\n→ Paysage des financements\n→ Options technologiques pour vos contraintes`;
+      case "de": return `## FORGE INTEL\n\nLive-KI-Marktforschung. Fragen Sie mich:\n\n→ Marktgröße und reale Zahlen\n→ Wettbewerber in diesem Bereich\n→ Vorschriften für Ihren Markt\n→ Finanzierungslandschaft\n→ Technologieoptionen für Ihre Einschränkungen`;
+      case "ar": return `## فورج إنتل (معلومات فورج)\n\nأبحاث السوق المباشرة بالذكاء الاصعتاعي. اسألني عن:\n\n← حجم السوق والأرقام الحقيقية\n← المنافسون في هذا المجال\n← التشريعات والأنظمة الخاصة بسوقك\n← مشهد التمويل والاستثمار\n← الخيارات التقنية المناسبة لقيودك`;
+      default: return `## FORGE INTEL\n\nLive AI research. Ask me:\n\n→ Market size and real numbers\n→ Competitors in this space\n→ Regulations for your market\n→ Funding landscape\n→ Tech options for your constraints`;
+    }
+  };
+
+  const [msgs, setMsgs] = useState(() => [{ role: "assistant", content: getGreeting(appLanguage) }]);
   const [inp, setInp] = useState("");
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef(null);
   const taRef = useRef(null);
   const histRef = useRef([]);
+
+  useEffect(() => {
+    // If the chat conversation is in its starting state, update the greeting automatically
+    if (histRef.current.length === 0) {
+      setMsgs([{ role: "assistant", content: getGreeting(appLanguage) }]);
+    }
+  }, [appLanguage]);
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
 
   const send = useCallback(async (text?: string) => {
@@ -1385,7 +1443,13 @@ function IntelPanel({ idea, profile, onClose, initialQuery, onQueryHandled }) {
     histRef.current = [...histRef.current, userMsg];
     setMsgs(prev => [...prev, userMsg, { role: "assistant", content: "" }]);
     setBusy(true);
-    const sys = `You are FORGE INTEL — direct, research-sharp AI for founders.\n${profileContext(profile)}\n${marketContext(profile)}\nAnswer with specifics relevant to this founder's context and market. Use **bold** for key terms. Use → for lists. Give best estimates when exact data unavailable.`;
+
+    const langName = getLangName(appLanguage);
+    let sys = `You are FORGE INTEL — direct, research-sharp AI for founders.\n${profileContext(profile)}\n${marketContext(profile)}\nAnswer with specifics relevant to this founder's context and market. Use **bold** for key terms. Use → for lists. Give best estimates when exact data unavailable.`;
+    if (appLanguage !== "en") {
+      sys += `\n\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST converse and write your entire response completely in ${langName}. Do NOT chat in English under any circumstances. Always reply in ${langName}.`;
+    }
+
     const ctx = histRef.current.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
     try {
       let reply = "";
@@ -1393,7 +1457,7 @@ function IntelPanel({ idea, profile, onClose, initialQuery, onQueryHandled }) {
       histRef.current = [...histRef.current, { role: "assistant", content: reply }];
     } catch (e) { setMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: "assistant", content: `Error: ${e.message}` }; return n; }); }
     setBusy(false); setTimeout(() => taRef.current?.focus(), 80);
-  }, [inp, busy, idea, profile]);
+  }, [inp, busy, idea, profile, appLanguage]);
 
   useEffect(() => {
     if (initialQuery && !busy) {
@@ -1455,11 +1519,492 @@ const OUTPUTS = [
   { key: "promptpack", icon: "💻", label: "Prompt Pack", desc: "Cursor/Claude Setup & Prompts" },
 ];
 
-const Q_SYS = `You are FORGE — an elite, analytical, herculean startup advisor.
+const LANGUAGES_LIST = [
+  { code: "sw", name: "Kiswahili (Swahili) 🇹🇿", native: "Kiswahili" },
+  { code: "en", name: "English 🇺🇸", native: "English" },
+  { code: "es", name: "Español (Spanish)", native: "Español" },
+  { code: "fr", name: "Français (French)", native: "Français" },
+  { code: "de", name: "Deutsch (German)", native: "Deutsch" },
+  { code: "ar", name: "العربية (Arabic)", native: "العربية" },
+  { code: "hi", name: "हिन्दी (Hindi)", native: "हिन्दी" },
+  { code: "zh-CN", name: "简体中文 (Chinese)", native: "简体中文" },
+  { code: "pt", name: "Português", native: "Português" },
+  { code: "it", name: "Italiano", native: "Italiano" },
+  { code: "ru", name: "Русский", native: "Русский" },
+  { code: "ja", name: "日本語", native: "日本語" },
+  { code: "ko", name: "한국어", native: "한국어" },
+  { code: "tr", name: "Türkçe", native: "Türkçe" },
+  { code: "vi", name: "Tiếng Việt", native: "Tiếng Việt" },
+  { code: "id", name: "Bahasa Indonesia", native: "Bahasa Indonesia" },
+  { code: "af", name: "Afrikaans", native: "Afrikaans" },
+  { code: "sq", name: "Shqip", native: "Shqip" },
+  { code: "am", name: "አማርኛ", native: "Amharic" },
+  { code: "hy", name: "Հայերեն", native: "Armenian" },
+  { code: "az", name: "Azərbaycan", native: "Azerbaijani" },
+  { code: "eu", name: "Euskara", native: "Basque" },
+  { code: "be", name: "Беларуская", native: "Belarusian" },
+  { code: "bn", name: "বাংলা", native: "Bengali" },
+  { code: "bs", name: "Bosanski", native: "Bosnian" },
+  { code: "bg", name: "Български", native: "Bulgarian" },
+  { code: "ca", name: "Català", native: "Catalan" },
+  { code: "ceb", name: "Cebuano", native: "Cebuano" },
+  { code: "ny", name: "Chichewa", native: "Chichewa" },
+  { code: "co", name: "Corsu", native: "Corsican" },
+  { code: "hr", name: "Hrvatski", native: "Croatian" },
+  { code: "cs", name: "Čeština", native: "Czech" },
+  { code: "da", name: "Dansk", native: "Danish" },
+  { code: "nl", name: "Nederlands", native: "Dutch" },
+  { code: "eo", name: "Esperanto", native: "Esperanto" },
+  { code: "et", name: "Eesti", native: "Estonian" },
+  { code: "tl", name: "Tagalog", native: "Filipino" },
+  { code: "fi", name: "Suomi", native: "Finnish" },
+  { code: "fy", name: "Frysk", native: "Frisian" },
+  { code: "gl", name: "Galego", native: "Galician" },
+  { code: "ka", name: "ქართული", native: "Georgian" },
+  { code: "el", name: "Ελληνικά", native: "Greek" },
+  { code: "gu", name: "ગુજરાતી", native: "Gujarati" },
+  { code: "ht", name: "Kreyòl Ayisyen", native: "Haitian Creole" },
+  { code: "ha", name: "Hausa", native: "Hausa" },
+  { code: "haw", name: "Ōlelo Hawaiʻi", native: "Hawaiian" },
+  { code: "iw", name: "עברית", native: "Hebrew" },
+  { code: "hmn", name: "Hmoob", native: "Hmong" },
+  { code: "hu", name: "Magyar", native: "Hungarian" },
+  { code: "is", name: "Íslenska", native: "Icelandic" },
+  { code: "ig", name: "Igbo", native: "Igbo" },
+  { code: "ga", name: "Gaeilge", native: "Irish" },
+  { code: "jv", name: "Jawa", native: "Javanese" },
+  { code: "kn", name: "ಕನ್ನಡ", native: "Kannada" },
+  { code: "kk", name: "Қазақ тілі", native: "Kazakh" },
+  { code: "km", name: "ខ្មែរ", native: "Khmer" },
+  { code: "rw", name: "Kinyarwanda", native: "Kinyarwanda" },
+  { code: "ku", name: "Kurdî", native: "Kurdish" },
+  { code: "ky", name: "Кыргызча", native: "Kyrgyz" },
+  { code: "lo", name: "ລາວ", native: "Lao" },
+  { code: "la", name: "Latina", native: "Latin" },
+  { code: "lv", name: "Latviešu", native: "Latvian" },
+  { code: "lt", name: "Lietuvių", native: "Lithuanian" },
+  { code: "lb", name: "Lëtzebuergesch", native: "Luxembourgish" },
+  { code: "mk", name: "Македонски", native: "Macedonian" },
+  { code: "mg", name: "Malagasy", native: "Malagasy" },
+  { code: "ms", name: "Bahasa Melayu", native: "Malay" },
+  { code: "ml", name: "മലയാളം", native: "Malayalam" },
+  { code: "mt", name: "Malti", native: "Maltese" },
+  { code: "mi", name: "Māori", native: "Maori" },
+  { code: "mr", name: "मराठी", native: "Marathi" },
+  { code: "mn", name: "Монгол", native: "Mongolian" },
+  { code: "my", name: "မြန်မာ", native: "Myanmar (Burmese)" },
+  { code: "ne", name: "नेपाली", native: "Nepali" },
+  { code: "no", name: "Norsk", native: "Norwegian" },
+  { code: "or", name: "ଓଡ଼ିଆ", native: "Odia" },
+  { code: "ps", name: "پښتو", native: "Pashto" },
+  { code: "fa", name: "فارسی", native: "Persian" },
+  { code: "pl", name: "Polski", native: "Polish" },
+  { code: "pa", name: "ਪੰਜਾਬੀ", native: "Punjabi" },
+  { code: "ro", name: "Română", native: "Romanian" },
+  { code: "sm", name: "Gagana Sāmoa", native: "Samoan" },
+  { code: "gd", name: "Gàidhlig", native: "Scots Gaelic" },
+  { code: "sr", name: "Српски", native: "Serbian" },
+  { code: "st", name: "Sesotho", native: "Sesotho" },
+  { code: "sn", name: "ChiShona", native: "Shona" },
+  { code: "sd", name: "سنڌي", native: "Sindhi" },
+  { code: "si", name: "සිංಹල", native: "Sinhala" },
+  { code: "sk", name: "Slovenčina", native: "Slovak" },
+  { code: "sl", name: "Slovenščina", native: "Slovenian" },
+  { code: "so", name: "Soomaali", native: "Somali" },
+  { code: "su", name: "Sunda", native: "Sundanese" },
+  { code: "tg", name: "Тоҷикӣ", native: "Tajik" },
+  { code: "ta", name: "தமிழ்", native: "Tamil" },
+  { code: "tt", name: "Татар", native: "Tatar" },
+  { code: "te", name: "తెలుగు", native: "Telugu" },
+  { code: "th", name: "ไทย", native: "Thai" },
+  { code: "ug", name: "ئۇيغۇرچە", native: "Uyghur" },
+  { code: "uk", name: "Українська", native: "Ukrainian" },
+  { code: "ur", name: "اردو", native: "Urdu" },
+  { code: "uz", name: "Oʻzbek", native: "Uzbek" },
+  { code: "cy", name: "Cymraeg", native: "Welsh" },
+  { code: "xh", name: "IsiXhosa", native: "Xhosa" },
+  { code: "yi", name: "ייִדיש", native: "Yiddish" },
+  { code: "yo", name: "Yorùbá", native: "Yoruba" },
+  { code: "zu", name: "IsiZulu", native: "Zulu" },
+];
+
+const getLangName = (code: string) => {
+  const found = LANGUAGES_LIST.find(l => l.code === code);
+  if (found) {
+    if (found.code === "ar") return "Arabic (العربية)";
+    if (found.code === "sw") return "Swahili (Kiswahili)";
+    if (found.code === "es") return "Spanish (Español)";
+    if (found.code === "fr") return "French (Français)";
+    if (found.code === "de") return "German (Deutsch)";
+    return found.name || found.native;
+  }
+  return "English";
+};
+
+function getQSys(langCode = "en") {
+  const langName = getLangName(langCode);
+  return `You are FORGE — an incredibly simple, kind, and helpful business buddy who asks questions using basic school-level words.
 FORMAT MANDATE:
-1. Always start with a 2-word title prefixed with ** and suffixed with ** (e.g., **Critical Problem**, **Ideal Customer**, **Distribution Edge**, **Market Entry**, **Technical Barrier**).
-2. On the next line, ask exactly one short, hyper-focused, direct question of maximum 15-18 words.
-3. No preambles, intros, system/metric names, meta-talk, or fluff. Just the title and the punchy question. Make it ultra-easy to read.`;
+1. Start with a 2-word title prefixed with ** and suffixed with ** (e.g., **The Problem**, **The Buyers**).
+2. On the next line, ask exactly ONE extremely short, ultra-simple question of maximum 8-10 words. It must be written with the most basic, plain everyday words possible.
+3. No business terms, no complex words, no startup jargon. (Do NOT use words like: co-founder, demographic, validation, constraints, monetization, acquisition, leverage, metrics, UVP).
+4. Make it so easy that anyone can read the question and type an answer in 5 seconds.
+${langCode !== "en" ? `5. The 2-word title and the question MUST be completely written/asked in ${langName}.` : ""}`;
+}
+
+const UI_TRANSLATIONS: Record<string, Record<string, string>> = {
+  English: {
+    next: "NEXT →",
+    save: "SAVING…",
+    enter: "ENTER FORGE SYSTEM →",
+    back: "BACK",
+    reset: "RESET",
+    search_placeholder: "Ask anything…",
+    honest_placeholder: "Honest. No performance.",
+    steps_completed: "QUESTIONS COMPLETED",
+    ai_research_chat: "AI RESEARCH CHAT",
+    forge_intel: "FORGE INTEL",
+    concept_score: "Concept Score",
+    reality_check: "Reality Check",
+    strengths: "STRENGTHS",
+    critical_risks: "CRITICAL RISKS / GAPS",
+    live_market_data: "LIVE MARKET DATA VALIDATION",
+    co_founder_override: "CO-FOUNDER PROFILE EXCERPT",
+    generation_loading: "Generating strategic reports. This will take a moment...",
+    founder_profile: "FOUNDER PROFILE",
+    market_context: "MARKET CONTEXT",
+    focus_mode_btn: "Focus Mode",
+    view_history: "View History",
+    history_vault: "History Vault",
+    user_settings: "User Settings",
+    convert_any_lang: "Translate Web App",
+    mindmap_label: "Mind Map",
+    mindmap_desc: "Interactive visual landscape",
+    blueprint_label: "Blueprint",
+    blueprint_desc: "Concept, market, risks, metrics",
+    roadmap_label: "Roadmap",
+    roadmap_desc: "4-phase plan to dominance",
+    businessplan_label: "Business Plan",
+    businessplan_desc: "Lean plan across all pillars",
+    actionplan_label: "30-Day Plan",
+    actionplan_desc: "Checkable tasks. Real outcomes.",
+    swot_label: "SWOT",
+    swot_desc: "Ruthless strategic breakdown",
+    promptpack_label: "Prompt Pack",
+    promptpack_desc: "Cursor/Claude Setup & Prompts",
+    speak_customer: "Have you spoken to at least one real potential customer about this idea?",
+    yes_spoken: "Yes, I have",
+    not_yet: "Not yet",
+    warning_spoken: "⚠ No real conversations = unvalidated assumptions. The outputs will still generate but treat them as hypotheses, not facts. Your #1 action after this: talk to one real person.",
+    running_reality: "RUNNING REALITY CHECK…",
+    reality_complete: "REALITY CHECK COMPLETE",
+    build_outputs: "BUILD OUTPUTS →",
+    drop_idea_label: "Drop your raw idea",
+    idea_placeholder: "No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live.",
+    ignite_btn: "IGNITE →",
+    loading: "LOADING…",
+    core_deliverables_title: "Core Deliverables Checkpoints",
+    advanced_venture_title: "Advanced Venture Deliverables",
+    deeper_strategic_analytics: "DEEPER STRATEGIC ANALYTICS",
+    collapse: "COLLAPSE",
+    expand: "EXPAND"
+  },
+  Kiswahili: {
+    next: "MBELE →",
+    save: "INAHIFADHI…",
+    enter: "INGIA KWENYE MSINGI →",
+    back: "NYUMA",
+    reset: "ANZA UPYA",
+    search_placeholder: "Uliza chochote…",
+    honest_placeholder: "Sema ukweli bila kuigiza.",
+    steps_completed: "MASWALI YAMEKAMILIKA",
+    ai_research_chat: "MAZUNGUMZO YA UTAFITI WA AI",
+    forge_intel: "FORGE MAARIFA",
+    concept_score: "Alama ya Wazo",
+    reality_check: "Mwangaza wa Ukweli",
+    strengths: "Nguvu Muhimu",
+    critical_risks: "Hatari na Upungufu",
+    live_market_data: "Uthibitisho wa Soko la Moja kwa Moja",
+    co_founder_override: "Muhtasari wa Wasifu wa Mwanzilishi Mwenza",
+    generation_loading: "Kutengeneza ripoti za kimkakati. Hii itachukua muda mfupi...",
+    founder_profile: "WASIFU WA MWANZILISHI",
+    market_context: "MAZINGIRA YA SOKO",
+    focus_mode_btn: "Hali ya Kuzingatia",
+    view_history: "Angalia Kumbukumbu",
+    history_vault: "Kombora la Kumbukumbu",
+    user_settings: "Mipangilio ya Mtumiaji",
+    convert_any_lang: "Tafsiri Programu",
+    mindmap_label: "Ramani ya Mawazo",
+    mindmap_desc: "Taswira unganishi ya mawazo",
+    blueprint_label: "Ramani ya Mradi",
+    blueprint_desc: "Dhana, soko, hatari, na vipimo",
+    roadmap_label: "Mpango Kazi",
+    roadmap_desc: "Awamu 4 kuelekea kutawala soko",
+    businessplan_label: "Mpango wa Biashara",
+    businessplan_desc: "Mpango mwepesi wa mihimili yote",
+    actionplan_label: "Mpango wa Siku 30",
+    actionplan_desc: "Kazi za kufanya na matokeo halisi",
+    swot_label: "Uchambuzi wa SWOT",
+    swot_desc: "Uchambuzi mkali wa nguvu na udhaifu",
+    promptpack_label: "Kifurushi cha Amri",
+    promptpack_desc: "Mipangilio ya Cursor na Claude",
+    speak_customer: "Je, umezungumza na angalau mteja mmoja mtarajiwa kuhusu wazo hili?",
+    yes_spoken: "Ndio, nimefanya hivyo",
+    not_yet: "Bado",
+    warning_spoken: "⚠ Hakuna mazungumzo halisi = mawazo yasiyothibitishwa. Ripoti zitajazwa lakini zichukulie kama nadharia tu, sio ukweli. Hatua yako ya kwanza sasa: zungumza na mtu mmoja halisi.",
+    running_reality: "TATAFITI MWANGAZA WA UKWELI…",
+    reality_complete: "MWANGAZA WA UKWELI UMEKAMILIKA",
+    build_outputs: "TENGENEZA RIPOTI →",
+    drop_idea_label: "Weka wazo lako ghafi hapa",
+    idea_placeholder: "Hakuna haja ya kuipamba. Nusu-kamili inafaa kabisa.\nMawazo ya ghafi na ya fujo ndipo mawazo bora yanapoishi.",
+    ignite_btn: "WASHA →",
+    loading: "INAFUNGUA…",
+    core_deliverables_title: "Vigezo Kuu vya Mipango ya Mradi",
+    advanced_venture_title: "Mipango ya Juu ya Biashara",
+    deeper_strategic_analytics: "UCHAMBUZI WA KIKAKATI ZAIDI",
+    collapse: "KUNJA",
+    expand: "PANUA"
+  },
+  Español: {
+    next: "SIGUIENTE →",
+    save: "GUARDANDO…",
+    enter: "ENTRAR AL SISTEMA FORGE →",
+    back: "ATRÁS",
+    reset: "REINICIAR",
+    search_placeholder: "Pregunta lo que sea…",
+    honest_placeholder: "Sincero. Sin rodeos.",
+    steps_completed: "PREGUNTAS COMPLETADAS",
+    ai_research_chat: "CHAT DE INVESTIGACIÓN IA",
+    forge_intel: "CEREBRO FORGE",
+    concept_score: "Puntuación de Concepto",
+    reality_check: "Baño de Realidad",
+    strengths: "Fortalezas",
+    critical_risks: "Riesgos Críticos",
+    live_market_data: "Validación de Mercado en Vivo",
+    co_founder_override: "Extracto del Perfil del Cofundador",
+    generation_loading: "Generando informes estratégicos. Esto tomará un momento...",
+    founder_profile: "PERFIL DEL FUNDADOR",
+    market_context: "CONTEXTO DEL MERCADO",
+    focus_mode_btn: "Modo Enfoque",
+    view_history: "Ver Historial",
+    history_vault: "Bóveda de Historial",
+    user_settings: "Ajustes de Usuario",
+    convert_any_lang: "Traducir Aplicación",
+    mindmap_label: "Mapa Mental",
+    mindmap_desc: "Espacio de trabajo visual",
+    blueprint_label: "Plano Estructural",
+    blueprint_desc: "Concepto, mercado, riesgos, métricas",
+    roadmap_label: "Ruta de Trabajo",
+    roadmap_desc: "4 fases hacia el éxito",
+    businessplan_label: "Plan de Negocios",
+    businessplan_desc: "Plan ágil en todos los pilares",
+    actionplan_label: "Plan de 30 Días",
+    actionplan_desc: "Tareas claras y resultados reales",
+    swot_label: "DAFO",
+    swot_desc: "Análisis estratégico de fortalezas",
+    promptpack_label: "Pack de Prompts",
+    promptpack_desc: "Configuración para Cursor y Claude",
+    speak_customer: "¿Has hablado con al menos un cliente potencial real sobre esta idea?",
+    yes_spoken: "Sí, lo he hecho",
+    not_yet: "Aún no",
+    warning_spoken: "⚠ Sin conversaciones reales = suposiciones no validadas. Se generará la información pero considérala como hipótesis, no hechos. Tu acción #1 después de esto: habla con una persona real.",
+    running_reality: "EJECUTANDO BAÑO DE REALIDAD…",
+    reality_complete: "BAÑO DE REALIDAD COMPLETADO",
+    build_outputs: "CONSTRUIR INFORMES →",
+    drop_idea_label: "Deja tu idea en bruto",
+    idea_placeholder: "No se necesita pulir. Una idea a medias está bien.\nAhí en lo bruto y desordenado es donde viven las mejores ideas.",
+    ignite_btn: "ENCENDER →",
+    loading: "CARGANDO…",
+    core_deliverables_title: "Puntos de Control de Entregables Clave",
+    advanced_venture_title: "Entregables de Empresa Avanzados",
+    deeper_strategic_analytics: "ANÁLISIS ESTRATÉGICO PROFUNDO",
+    collapse: "COLAPSAR",
+    expand: "EXPANDIR"
+  },
+  Français: {
+    next: "SUIVANT →",
+    save: "ENREGISTREMENT…",
+    enter: "ENTRER DANS FORGE →",
+    back: "RETOUR",
+    reset: "RÉINITIALISER",
+    search_placeholder: "Demandez n'importe quoi…",
+    honest_placeholder: "Honnête. Sans détour.",
+    steps_completed: "QUESTIONS COMPLÉTÉES",
+    ai_research_chat: "CHAT DE RECHERCHE IA",
+    forge_intel: "INTELLIGÈNCE FORGE",
+    concept_score: "Score de Concept",
+    reality_check: "Vérité Brutale",
+    strengths: "Forces",
+    critical_risks: "Risques Critiques",
+    live_market_data: "Validation du Marché en Direct",
+    co_founder_override: "Extrait du Profil du Cofondateur",
+    generation_loading: "Génération de rapports stratégiques. Veuillez patienter...",
+    founder_profile: "PROFIL DU FONDATEUR",
+    market_context: "CONTEXTE DU MARCHÉ",
+    focus_mode_btn: "Mode Concentration",
+    view_history: "Voir l'Historique",
+    history_vault: "Coffre d'Historique",
+    user_settings: "Paramètres",
+    convert_any_lang: "Traduire l'Application",
+    mindmap_label: "Carte Mentale",
+    mindmap_desc: "Espace de travail visual",
+    blueprint_label: "Plan de Concept",
+    blueprint_desc: "Concept, marché, risques, indicateurs",
+    roadmap_label: "Route de Travail",
+    roadmap_desc: "Plan en 4 étapes",
+    businessplan_label: "Plan d'Affaires",
+    businessplan_desc: "Planification agile complète",
+    actionplan_label: "Plan de 30 Jours",
+    actionplan_desc: "Tâches à faire et objectifs clairs",
+    swot_label: "SWOT",
+    swot_desc: "Analyse des forces et faiblesses",
+    promptpack_label: "Pack de Prompts",
+    promptpack_desc: "Config de démarrage pour Claude/Cursor",
+    speak_customer: "Avez-vous parlé à au moins un client potentiel réel de cette idée ?",
+    yes_spoken: "Oui, je l'ai fait",
+    not_yet: "Pas encore",
+    warning_spoken: "⚠ Pas de conversations réelles = hypothèses non validées. Les rapports seront générés mais traitez-les comme des hypothèses. Votre action #1 après cela : parlez à une personne réelle.",
+    running_reality: "EXÉCUTION DU CONTRÔLE DE RÉALITÉ…",
+    reality_complete: "CONTRÔLE DE RÉALITÉ TERMINÉ",
+    build_outputs: "CRÉER LES RAPPORTS →",
+    drop_idea_label: "Déposez votre idée brute",
+    idea_placeholder: "Pas besoin de peaufiner. Une idée à moitié cuite est parfaite.\nC'est dans le brut et le désordre que vivent les meilleures idées.",
+    ignite_btn: "ALLUMER →",
+    loading: "CHARGEMENT…",
+    core_deliverables_title: "Points de Contrôle des Livrables Clés",
+    advanced_venture_title: "Livrables de Projet Avancés",
+    deeper_strategic_analytics: "ANALYSE STRATÉGIQUE APPROFONDIE",
+    collapse: "RÉDUIRE",
+    expand: "DÉVELOPPER"
+  },
+  Deutsch: {
+    next: "WEITER →",
+    save: "SPEICHERN…",
+    enter: "FORGE SYSTEM STARTEN →",
+    back: "ZURÜCK",
+    reset: "ZURÜCKSETZEN",
+    search_placeholder: "Frage stellen…",
+    honest_placeholder: "Ehrlich. Direkt.",
+    steps_completed: "FRAGEN BEANTWORTET",
+    ai_research_chat: "KI FORSCHUNGS-CHAT",
+    forge_intel: "FORGE ERKENNTNIS",
+    concept_score: "Konzept-Bewertung",
+    reality_check: "Realitäts-Check",
+    strengths: "Stärken",
+    critical_risks: "Kritische Risiken",
+    live_market_data: "Live-Marktdaten Validierung",
+    co_founder_override: "Mitgründer-Profil-Auszug",
+    generation_loading: "Erstelle Strategieberichte. Bitte warten...",
+    founder_profile: "GRÜNDERPROFIL",
+    market_context: "MARKTKONTEXT",
+    focus_mode_btn: "Fokus-Modus",
+    view_history: "Verlauf anzeigen",
+    history_vault: "Verlaufs-Tresor",
+    user_settings: "Einstellungen",
+    convert_any_lang: "App übersetzen",
+    mindmap_label: "Mindmap",
+    mindmap_desc: "Interaktive visuelle Übersicht",
+    blueprint_label: "Bauplan",
+    blueprint_desc: "Konzept, Markt, Risiken, Metriken",
+    roadmap_label: "Fahrplan",
+    roadmap_desc: "4 Phasen zur Marktführerschaft",
+    businessplan_label: "Businessplan",
+    businessplan_desc: "Schlanker Plan über alle Säulen",
+    actionplan_label: "30-Tage-Plan",
+    actionplan_desc: "Konkrete Aufgaben & reale Ziele",
+    swot_label: "SWOT-Analyse",
+    swot_desc: "Kompromisslose Stärken-Schwächen-Analyse",
+    promptpack_label: "Prompt-Paket",
+    promptpack_desc: "Cursor- & Claude-Anweisungen",
+    speak_customer: "Haben Sie mit mindestens einem echten potenziellen Kunden über diese Idee gesprochen?",
+    yes_spoken: "Ja, habe ich",
+    not_yet: "Noch nicht",
+    warning_spoken: "⚠ Keine echten Gespräche = ungeprüfte Annahmen. Die Berichte werden generiert, betrachten Sie sie jedoch als Hypothesen. Ihre wichtigste Maßnahme danach: Sprechen Sie mit einer echten Person.",
+    running_reality: "REALITÄTS-CHECK LÄUFT…",
+    reality_complete: "REALITÄTS-CHECK ABGESCHLOSSEN",
+    build_outputs: "BERICHTE ERSTELLEN →",
+    drop_idea_label: "Geben Sie Ihre rohe Idee ein",
+    idea_placeholder: "Kein Finetuning nötig. Halbfertig ist völlig okay.\nIn rohen und unordentlichen Gedanken entstehen die besten Ideen.",
+    ignite_btn: "ZÜNDEN →",
+    loading: "LÄDT…",
+    core_deliverables_title: "Kern-Meilensteine",
+    advanced_venture_title: "Erweiterte Meilensteine",
+    deeper_strategic_analytics: "TIEFENWERKENDE STRATEGISCHE ANALYSEN",
+    collapse: "EINKLAPPEN",
+    expand: "AUSKLAPPEN"
+  },
+  "العربية": {
+    next: "التالي ←",
+    save: "جاري الحفظ…",
+    enter: "الدخول إلى نظام فورج ←",
+    back: "رجوع",
+    reset: "إعادة تعيين",
+    search_placeholder: "اسأل عن أي شيء…",
+    honest_placeholder: "كن صريحاً. بدون مجاملة.",
+    steps_completed: "الأسئلة المنجزة",
+    ai_research_chat: "دردشة أبحاث الذكاء الاصطناعي",
+    forge_intel: "معلومات فورج",
+    concept_score: "تقييم الفكرة",
+    reality_check: "مواجهة الواقع",
+    strengths: "نقاط القوة",
+    critical_risks: "المخاطر والعيوب",
+    live_market_data: "التحقق من بيانات السوق الحية",
+    co_founder_override: "مقتطف من ملف المؤسس الشريك",
+    generation_loading: "جاري توليد التقارير الاستراتيجية. يرجى الانتظار لحظة...",
+    founder_profile: "ملف المؤسس",
+    market_context: "سياق السوق",
+    focus_mode_btn: "وضع التركيز",
+    view_history: "عرض السجل",
+    history_vault: "خزنة السجل",
+    user_settings: "إعدادات المستخدم",
+    convert_any_lang: "ترجمة التطبيق",
+    mindmap_label: "الخريطة الذهنية",
+    mindmap_desc: "المشهد البصري التفاعلي",
+    blueprint_label: "المخطط الهيكلي",
+    blueprint_desc: "المفهوم، السوق، المخاطر، والقياسات",
+    roadmap_label: "خارطة الطريق",
+    roadmap_desc: "خطة من 4 مراحل للريادة والسيطرة",
+    businessplan_label: "خطة العمل",
+    businessplan_desc: "خطة عمل مرنة لجميع ركائز المشروع",
+    actionplan_label: "خطة 30 يوماً",
+    actionplan_desc: "مهام قابلة للتحقق ونتائج ملموسة",
+    swot_label: "تحليل SWOT",
+    swot_desc: "تحليل استراتيجي لنقاط القوة والضعف",
+    promptpack_label: "حزمة الأوامر",
+    promptpack_desc: "إعدادات وأوامر لـ Claude و Cursor",
+    speak_customer: "هل تحدثت مع عميل حقيقي واحد محتمل على الأقل حول هذه الفكرة؟",
+    yes_spoken: "نعم، لقد فعلت ذلك",
+    not_yet: "ليس بعد",
+    warning_spoken: "⚠ لا توجد محادثات حقيقية = افتراضات غير مؤكدة. سيستمر توليد التقارير ولكن تعامل معها كفرضيات وليست حقائق. خطوتك الأولى والأساسية بعد هذا: تحدث إلى شخص حقيقي واحد.",
+    running_reality: "جاري تشغيل مواجهة الواقع…",
+    reality_complete: "اكتملت مواجهة الواقع",
+    build_outputs: "إنشاء المخرجات والتقارير ←",
+    drop_idea_label: "ضع فكرتك الخام هنا",
+    idea_placeholder: "لا حاجة للصقل الآن. الأفكار غير المكتملة مقبولة تماماً.\nفي الفوضى والمسودات الخام تولد وتعيش أفضل الأفكار.",
+    ignite_btn: "إشعال الفكرة ←",
+    loading: "جاري التحميل...",
+    core_deliverables_title: "نقاط التحقق من المخرجات الأساسية",
+    advanced_venture_title: "مخرجات المشروع المتقدمة",
+    deeper_strategic_analytics: "تحليلات استراتيجية أعمق",
+    collapse: "طي",
+    expand: "توسيع"
+  },
+};
+
+function t(key: string, lang = "en"): string {
+  const langKeyMap: Record<string, string> = {
+    en: "English",
+    sw: "Kiswahili",
+    es: "Español",
+    fr: "Français",
+    de: "Deutsch",
+    ar: "العربية"
+  };
+  const uiKey = langKeyMap[lang] || lang;
+  const dict = UI_TRANSLATIONS[uiKey] || UI_TRANSLATIONS["English"];
+  return dict[key] || UI_TRANSLATIONS["English"][key] || key;
+}
+
 const ctxStr = pairs => pairs.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n");
 
 // ── SIGNATURE HALLMARK WAX SEAL ──────────────────────────
@@ -1553,12 +2098,151 @@ function SignatureSeal() {
 
 // ── MAIN APP ──────────────────────────────────────────────
 export default function App() {
+  const [appLanguage, setAppLanguage] = useState(() => {
+    return localStorage.getItem("forge_app_language") || "en";
+  });
+  const [showLangSelector, setShowLangSelector] = useState(false);
+  const [langSearchQuery, setLangSearchQuery] = useState("");
+  const langSelectorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem("forge_app_language", appLanguage);
+  }, [appLanguage]);
+
+  // Click outside language selector to close it
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (langSelectorRef.current && !langSelectorRef.current.contains(event.target as Node)) {
+        setShowLangSelector(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Reset language search list when selector is closed
+  useEffect(() => {
+    if (!showLangSelector) {
+      setLangSearchQuery("");
+    }
+  }, [showLangSelector]);
+
+  // Google Translate Loader and Synchronizer
+  useEffect(() => {
+    if (document.getElementById("google-translate-script")) return;
+
+    (window as any).googleTranslateElementInit = () => {
+      new (window as any).google.translate.TranslateElement({
+        pageLanguage: 'en',
+        layout: (window as any).google.translate.TranslateElement.InlineLayout.SIMPLE,
+        autoDisplay: false
+      }, 'google_translate_element');
+      
+      // Auto-trigger saved language on initial load
+      setTimeout(() => {
+        const select = document.querySelector(".goog-te-combo") as HTMLSelectElement;
+        const savedLang = localStorage.getItem("forge_app_language") || "en";
+        if (select && savedLang !== "en") {
+          select.value = savedLang;
+          select.dispatchEvent(new Event("change"));
+        }
+      }, 1500);
+    };
+
+    const addScript = document.createElement("script");
+    addScript.id = "google-translate-script";
+    addScript.setAttribute("type", "text/javascript");
+    addScript.setAttribute("src", "//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit");
+    document.body.appendChild(addScript);
+  }, []);
+
+  const handleLanguageChange = (langCode: string) => {
+    localStorage.setItem("forge_app_language", langCode);
+    setAppLanguage(langCode);
+
+    // Set translation cookie recognized by Google Translate
+    document.cookie = `googtrans=/en/${langCode}; path=/`;
+    document.cookie = `googtrans=/en/${langCode}; domain=${window.location.hostname}; path=/`;
+
+    // Try setting the dropdown value directly
+    const changeWidget = () => {
+      const select = document.querySelector(".goog-te-combo") as HTMLSelectElement;
+      if (select) {
+        select.value = langCode;
+        select.dispatchEvent(new Event("change"));
+        return true;
+      }
+      return false;
+    };
+
+    if (!changeWidget()) {
+      // If the widget isn't ready yet, poll for up to 5 seconds every 250ms (never reload!)
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+        if (changeWidget() || attempts > 20) {
+          clearInterval(interval);
+        }
+      }, 250);
+    }
+  };
+
   const [appState, setAppState] = useState("loading"); // loading | auth | onboarding | app
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [phase, setPhase] = useState("ignition");
-  const [idea, setIdea] = useState("");
-  const [qa, setQa] = useState([]);
+  
+  const [phase, setPhase] = useState(() => {
+    try {
+      return localStorage.getItem("forge_draft_phase") || "ignition";
+    } catch {
+      return "ignition";
+    }
+  });
+
+  const [phaseHistory, setPhaseHistory] = useState<string[]>([]);
+  const lastPhaseRef = useRef<string>("ignition");
+
+  useEffect(() => {
+    lastPhaseRef.current = phase;
+  }, []);
+
+  useEffect(() => {
+    const prev = lastPhaseRef.current;
+    if (prev !== phase) {
+      setPhaseHistory(history => {
+        const lastInHistory = history[history.length - 1];
+        if (lastInHistory === phase) {
+          return history.slice(0, -1);
+        } else {
+          if (phase === "ignition") {
+            return [];
+          }
+          return [...history, prev];
+        }
+      });
+      lastPhaseRef.current = phase;
+    }
+  }, [phase]);
+
+  const [idea, setIdea] = useState(() => {
+    try {
+      return localStorage.getItem("forge_draft_idea") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [qa, setQa] = useState(() => {
+    try {
+      const saved = localStorage.getItem("forge_draft_qa");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [curQ, setCurQ] = useState("");
   const [curA, setCurA] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1567,6 +2251,16 @@ export default function App() {
   const [outputs, setOutputs] = useState({});
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("forge_draft_phase", phase);
+      localStorage.setItem("forge_draft_idea", idea);
+      localStorage.setItem("forge_draft_qa", JSON.stringify(qa));
+    } catch (e) {
+      console.error("Local draft saving exception:", e);
+    }
+  }, [phase, idea, qa]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1711,6 +2405,23 @@ export default function App() {
     a.download = `forge_${outType}_${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportPDF = async () => {
+    if (!outType || !outputs[outType]) return;
+    setLoading(true);
+    setLoadMsg(appLanguage === "sw" ? "Inatayarisha faili ya PDF..." : "Preparing secure PDF download...");
+    try {
+      const labelItem = OUTPUTS.find(o => o.key === outType)?.label || "Document";
+      const filename = `Forge_${labelItem.replace(/\s+/g, "_")}_${Date.now()}.pdf`;
+      await exportComponentToPDF("forge-pdf-export-root", filename);
+      trackEvent("export_pdf_success", "action", outType);
+    } catch (e: any) {
+      console.error(e);
+      setErr("Failed to export PDF: " + e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const taRef = useRef(null);
@@ -1890,7 +2601,12 @@ export default function App() {
   const scoreIdea = useCallback(async (pairs) => {
     try {
       // We use our proxy search feature to find recent validation data online!
-      const s = await ai(`You are FORGE VALIDATION ENGINE. Score this startup idea and use provided LIVE WEB DATA to validate the market. JSON only format: {"score":75,"label":"Solid","verdict":"brutal one sentence","strengths":["s1","s2"],"gaps":["g1","g2"],"searchValidation":{"percentage":82,"findings":["Searched fact 1","Searched fact 2"]}} Labels:Weak/Needs Work/Solid/Strong/Exceptional. Be factual.`, `${profileContext(profile)}\nIdea:"${idea}"\n${ctxStr(pairs)}`, true, 1000, 2, "market validation competitors for: " + idea);
+      let scoreSysPrompt = `You are FORGE VALIDATION ENGINE. Score this startup idea and use provided LIVE WEB DATA to validate the market. JSON only format: {"score":75,"label":"Solid","verdict":"brutal one sentence","strengths":["s1","s2"],"gaps":["g1","g2"],"searchValidation":{"percentage":82,"findings":["Searched fact 1","Searched fact 2"]}} Labels:Weak/Needs Work/Solid/Strong/Exceptional. Be factual.`;
+      if (appLanguage && appLanguage !== "en") {
+        const langName = getLangName(appLanguage);
+        scoreSysPrompt += `\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST define/write the "label", "verdict", "strengths", "gaps", and "findings" texts in ${langName}. Do not translate standard JSON keys like "score" or "label" or "verdict" itself to avoid parser breaks, but translate their value strings.`;
+      }
+      const s = await ai(scoreSysPrompt, `${profileContext(profile)}\nIdea:"${idea}"\n${ctxStr(pairs)}`, true, 1000, 2, "market validation competitors for: " + idea);
       setIdeaScore(s);
       trackEvent("reality_check_scored", "validation", s.label, s.score);
       
@@ -1962,7 +2678,7 @@ ${ctxStr(pairs)}`;
     } catch {
       setGlobalError("Couldn't reach the engine. Try again in a moment.");
     }
-  }, [idea, profile, user, currentIdeaId]);
+  }, [idea, profile, user, currentIdeaId, appLanguage]);
 
   const prefetchNext = useCallback((updated) => {
     if (updated.length >= Q_TARGET) return;
@@ -1970,8 +2686,8 @@ ${ctxStr(pairs)}`;
     const key = `q${updated.length + 1}`;
     if (prefetchRef.current[key]) return;
     const style = styles[updated.length % styles.length];
-    prefetchRef.current[key] = ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${style} style. Biggest unexplored gap. Push hard.`, false, 1000);
-  }, [idea, profile]);
+    prefetchRef.current[key] = ai(getQSys(appLanguage), `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${style} style. Biggest unexplored gap. Push hard.`, false, 1000);
+  }, [idea, profile, appLanguage]);
 
   const cleanQuestion = (qStr) => {
     let cleanQ = qStr.trim();
@@ -2007,7 +2723,7 @@ ${ctxStr(pairs)}`;
 
     setLoading(true); setErr("");
     try {
-      const q = await ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\nQ1 of ${Q_TARGET}. Creative style. Most foundational: what they're ACTUALLY building, for WHOM, single reason it must exist NOW.`, false, 1000);
+      const q = await ai(getQSys(appLanguage), `${profileContext(profile)}\nIdea:"${idea}"\nQ1 of ${Q_TARGET}. Creative style. Most foundational: what they're ACTUALLY building, for WHOM, single reason it must exist NOW.`, false, 1000);
       setCurQ(cleanQuestion(q)); setPhase("questioning");
     } catch (e: any) { 
       setErr(e.message); 
@@ -2037,7 +2753,7 @@ ${ctxStr(pairs)}`;
         }
       }
       delete prefetchRef.current[key];
-      const q = cached || await ai(Q_SYS, `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${["Creative","Critical","Strategic","Logical"][updated.length % 4]} style. Biggest unexplored gap.`, false, 1000);
+      const q = cached || await ai(getQSys(appLanguage), `${profileContext(profile)}\nIdea:"${idea}"\n\n${ctxStr(updated)}\n\nQ${updated.length + 1} of ${Q_TARGET}: ${["Creative","Critical","Strategic","Logical"][updated.length % 4]} style. Biggest unexplored gap.`, false, 1000);
       setCurQ(cleanQuestion(q));
     } catch (e) { 
       setErr(e.message); 
@@ -2059,14 +2775,23 @@ ${ctxStr(pairs)}`;
     }
   };
 
-  const generate = async (type) => {
-    if (outputs[type]) { setOutType(type); setPhase("output"); return; }
+  const generate = async (type, forceRegen = false) => {
+    if (outputs[type] && !forceRegen) { setOutType(type); setPhase("output"); return; }
     trackEvent("generate_output_started", "intelligence", type);
     setOutType(type); setPhase("generating"); setErr("");
     setLoadMsg(`Forging ${OUTPUTS.find(o => o.key === type)?.label}…`);
     const cfg = CONFIGS[type];
+    const labelKey = `${type}_label`;
+    const translatedLabel = t(labelKey, appLanguage);
+    setLoadMsg(appLanguage === "sw" ? `Tengeneza ${translatedLabel}…` : `Forging ${translatedLabel}…`);
+    
+    let customSys = cfg.sys;
+    if (appLanguage && appLanguage !== "en") {
+      const langName = getLangName(appLanguage);
+      customSys += `\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST define/write ALL display text values, descriptions, titles, lists, goals, and content fields inside the JSON object in ${langName}. Do not translate or modify standard JSON structure keys (like "weeks", "tasks", "priority", "sections", "milestones", "kpis", etc.) to prevent parse failure, but translate all strings, values, and paragraphs.`;
+    }
     try {
-      const result = await ai(cfg.sys, cfg.usr(idea, ctxStr(qa), profile), true, 1400, 2, true);
+      const result = await ai(customSys, cfg.usr(idea, ctxStr(qa), profile), true, 1400, 2, true);
       setOutputs(prev => ({ ...prev, [type]: result }));
       trackEvent("generate_output_success", "intelligence", type);
       setPhase("output");
@@ -2096,7 +2821,7 @@ ${ctxStr(pairs)}`;
 
   if (appState === "loading") return <div style={{ minHeight: "100vh", background: "#050505", display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ color: LIME, fontSize: "10px", letterSpacing: "4px", fontFamily: "monospace", fontWeight: "bold" }}>LOADING SYSTEM…</div></div>;
   if (appState === "auth") return <AuthScreen onAuth={handleAuth} />;
-  if (appState === "onboarding") return <Onboarding user={user} onDone={handleOnboarding} />;
+  if (appState === "onboarding") return <Onboarding user={user} onDone={handleOnboarding} appLanguage={appLanguage} />;
 
   const showTools = phase !== "ignition";
   const scoreColor = s => s >= 80 ? LIME : s >= 60 ? CYAN : PINK;
@@ -2143,8 +2868,8 @@ ${ctxStr(pairs)}`;
         .gh:hover{color:${LIME}!important;border-color:${LIME}!important;background:rgba(200,255,0,0.03)!important;}
       `}</style>
 
-      {intel && <IntelPanel idea={idea} profile={profile} onClose={() => setIntel(false)} initialQuery={intelQuery} onQueryHandled={() => setIntelQuery(null)} />}
-      {company && <CompanyBuilder idea={idea} qaCtx={ctxStr(qa)} profile={profile} onClose={() => setCompany(false)} />}
+      {intel && <IntelPanel idea={idea} profile={profile} onClose={() => setIntel(false)} initialQuery={intelQuery} onQueryHandled={() => setIntelQuery(null)} appLanguage={appLanguage} />}
+      {company && <CompanyBuilder idea={idea} qaCtx={ctxStr(qa)} profile={profile} onClose={() => setCompany(false)} appLanguage={appLanguage} />}
       {showProfile && <ProfilePanel profile={profile} user={user} onUpdate={p => setProfile(p)} onLogout={logout} onClose={() => setShowProfile(false)} onOpenFeedback={() => setShowFeedbackModal(true)} onUpgrade={() => { setShowProfile(false); setGuestAuthOpen(true); }} />}
       {showHistory && <HistoryPanel uid={user?.uid} onLoad={loadIdea} onClose={() => setShowHistory(false)} />}
 
@@ -2287,6 +3012,30 @@ ${ctxStr(pairs)}`;
                 )}
               </div>
             )}
+
+            {/* Clickable link for Data & AI Operations inside the feedback modal */}
+            <div style={{ textAlign: "center", marginTop: "1rem", borderTop: "1px solid #141414", paddingTop: "0.8rem" }}>
+              <button 
+                onClick={() => {
+                  setShowFeedbackModal(false);
+                  setShowPrivacyDialog(true);
+                }} 
+                style={{ 
+                  background: "transparent", 
+                  border: "none", 
+                  color: "rgba(255,255,255,0.35)", 
+                  fontSize: "9px", 
+                  fontFamily: "monospace", 
+                  textDecoration: "underline", 
+                  cursor: "pointer",
+                  transition: "color 0.15s"
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = LIME}
+                onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.35)"}
+              >
+                Data & AI Operations
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2382,8 +3131,14 @@ ${ctxStr(pairs)}`;
         {!isFocusMode && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.7rem 0 1.3rem", borderBottom: "1px solid #1c1c1c", marginBottom: "1.8rem" }}>
           
-          {/* Top left: Small FORGE logo only */}
-          <div style={{ display: "flex", alignItems: "center" }}>
+          {/* Top left: Small FORGE logo only - clickable to restart */}
+          <div 
+            style={{ display: "flex", alignItems: "center", cursor: "pointer", transition: "transform 0.1s ease" }} 
+            onClick={resetIdea}
+            title="Go to Home / Anza Upya"
+            onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)" }}
+            onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)" }}
+          >
             <div style={{ 
               width: "36px",
               height: "36px", 
@@ -2411,6 +3166,106 @@ ${ctxStr(pairs)}`;
 
           {/* Top right: Icons only */}
           <div style={{ display: "flex", gap: "0.45rem", alignItems: "center" }}>
+            {/* Language Selector Dropdown */}
+            <div ref={langSelectorRef} style={{ position: "relative" }}>
+              <button 
+                className="gh" 
+                style={{ ...G.ghost, padding: "0.55rem", border: "none", color: appLanguage !== "en" ? LIME : "rgba(255,255,255,0.7)" }} 
+                onClick={() => setShowLangSelector(!showLangSelector)}
+                title="Select Language / Chagua Lugha"
+              >
+                <Globe size={18} />
+              </button>
+              {showLangSelector && (
+                <div style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  marginTop: "0.5rem",
+                  background: "#0d0d0d",
+                  border: `1.5px solid ${GOLD}`,
+                  borderRadius: "6px",
+                  padding: "0.5rem",
+                  zIndex: 5000,
+                  minWidth: "240px",
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.9)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.4rem"
+                }}>
+                  <div style={{ padding: "0.2rem 0.4rem", fontSize: "0.62rem", color: "rgba(255,255,255,0.4)", fontFamily: "monospace", textTransform: "uppercase" }}>
+                    Select Language / Chagua Lugha
+                  </div>
+                  
+                  {/* Real-time search filter */}
+                  <input
+                    type="text"
+                    value={langSearchQuery}
+                    onChange={(e) => setLangSearchQuery(e.target.value)}
+                    placeholder="Search / Tafuta (e.g. Swahili, Spanish, French)..."
+                    style={{
+                      background: "#161616",
+                      border: "1px solid #2a2a2a",
+                      color: "#ffffff",
+                      fontSize: "0.75rem",
+                      padding: "0.45rem 0.6rem",
+                      borderRadius: "4px",
+                      outline: "none",
+                      width: "100%",
+                      fontFamily: "monospace",
+                      marginBottom: "0.25rem"
+                    }}
+                    autoFocus
+                  />
+                  
+                  {/* Container for scrollable listing of 90+ global languages */}
+                  <div style={{
+                    maxHeight: "220px",
+                    overflowY: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "2px",
+                    paddingRight: "2px"
+                  }}>
+                    {LANGUAGES_LIST.filter(l => 
+                      l.name.toLowerCase().includes(langSearchQuery.toLowerCase()) ||
+                      l.native.toLowerCase().includes(langSearchQuery.toLowerCase()) ||
+                      l.code.toLowerCase().includes(langSearchQuery.toLowerCase())
+                    ).map(langOption => {
+                      const isSelected = appLanguage === langOption.code;
+                      return (
+                        <button
+                          key={langOption.code}
+                          onClick={() => {
+                            handleLanguageChange(langOption.code);
+                            setShowLangSelector(false);
+                            setLangSearchQuery("");
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            background: isSelected ? "rgba(200, 162, 78, 0.15)" : "transparent",
+                            color: isSelected ? GOLD : "#ffffff",
+                            border: "none",
+                            padding: "0.5rem 0.6rem",
+                            fontSize: "0.78rem",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontFamily: "sans-serif",
+                            transition: "all 0.15s",
+                            fontWeight: isSelected ? "bold" : "normal"
+                          }}
+                        >
+                          {langOption.name} {isSelected && " ✓"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {showTools && <>
               <button className="gh" onClick={() => { setIntel(!intel); setCompany(false); }} style={{ ...G.ghost, color: intel ? LIME : "rgba(255,255,255,0.5)", borderColor: intel ? LIME : "#1c1c1c", padding: "0.55rem" }}>
                 <Zap size={16} />
@@ -2449,12 +3304,12 @@ ${ctxStr(pairs)}`;
             <div style={{ display: "flex", gap: "6px", marginBottom: "0.65rem" }}>
               {Array.from({ length: Q_TARGET }).map((_, i) => (<div key={i} style={{ height: "4px", flex: 1, borderRadius: "2px", background: i < qa.length ? LIME : i === qa.length ? `${LIME}40` : "rgba(255,255,255,0.06)", transition: "background .4s", border: "1px solid #1a1a1a" }} />))}
             </div>
-            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "1px", marginBottom: "2rem", fontFamily: "monospace" }}>{qa.length}/{Q_TARGET} QUESTIONS COMPLETED</div>
+            <div style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "1px", marginBottom: "2rem", fontFamily: "monospace" }}>{qa.length}/{Q_TARGET} {t("steps_completed", appLanguage)}</div>
             {loading ? (
-              <div style={{ padding: "2.5rem 0" }}><span style={{ color: PURPLE, fontSize: "0.75rem", letterSpacing: "2.5px", fontFamily: "monospace", fontWeight: "bold" }}>THINKING</span>{[0, 1, 2, 3].map(i => <span key={i} style={{ color: PURPLE, animation: `pulse 1.5s ease ${i * .25}s infinite` }}>.</span>)}</div>
+              <div style={{ padding: "2.5rem 0" }}><span style={{ color: PURPLE, fontSize: "0.75rem", letterSpacing: "2.5px", fontFamily: "monospace", fontWeight: "bold" }}>{appLanguage === "sw" ? "INAFIKIRI" : appLanguage === "es" ? "PENSANDO" : "THINKING"}</span>{[0, 1, 2, 3].map(i => <span key={i} style={{ color: PURPLE, animation: `pulse 1.5s ease ${i * .25}s infinite` }}>.</span>)}</div>
             ) : (() => {
               const lines = (curQ || "").split("\n").map(l => l.trim()).filter(Boolean);
-              let subtitle = `STRESS TEST ${qa.length + 1}`;
+              let subtitle = `${appLanguage === "sw" ? "SURA YA UKWELI" : "STRESS TEST"} ${qa.length + 1}`;
               let body = curQ;
               if (lines.length >= 2 && lines[0].startsWith("**") && lines[0].endsWith("**")) {
                 subtitle = lines[0].replace(/\*\*/g, "");
@@ -2473,12 +3328,12 @@ ${ctxStr(pairs)}`;
                       {body}
                     </p>
                   </div>
-                  <p style={G.label}>Your answer</p>
-                  <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} placeholder="Honest. No performance." value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
+                  <p style={G.label}>{appLanguage === "sw" ? "Jibu Lako" : appLanguage === "es" ? "Tu respuesta" : "Your Answer"}</p>
+                  <textarea ref={taRef} style={{ ...G.ta, height: "105px" }} placeholder={t("honest_placeholder", appLanguage)} value={curA} onChange={e => { setCurA(e.target.value); if (e.target.value.length === 4) prefetchNext([...qa, { question: curQ, answer: e.target.value }]); }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && curA.trim() && !loading) next(); }} autoFocus />
                   <div style={{ display: "flex", gap: "0.7rem", marginTop: "0.85rem", alignItems: "center" }}>
-                    {qa.length > 0 && <button className="gh" style={G.ghost} onClick={backQ}>← BACK</button>}
-                    <button style={{ ...G.btn, opacity: !curA.trim() ? 0.2 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? "FINISH →" : "NEXT →"}</button>
-                    {qa.length >= 3 && <button className="gh" style={G.ghost} onClick={() => { scoreIdea(qa); setPhase("reality-check"); }}>skip →</button>}
+                    {qa.length > 0 && <button className="gh" style={G.ghost} onClick={backQ}>← {t("back", appLanguage)}</button>}
+                    <button style={{ ...G.btn, opacity: !curA.trim() ? 0.2 : 1 }} onClick={next} disabled={!curA.trim() || loading}>{qa.length + 1 === Q_TARGET ? (appLanguage === "sw" ? "MALIZA →" : "FINISH →") : t("next", appLanguage)}</button>
+                    {qa.length >= 3 && <button className="gh" style={G.ghost} onClick={() => { scoreIdea(qa); setPhase("reality-check"); }}>{appLanguage === "sw" ? "ruka →" : "skip →"}</button>}
                   </div>
                   {err && <div style={G.err}>{err}</div>}
                 </>
@@ -2491,7 +3346,7 @@ ${ctxStr(pairs)}`;
         {phase === "reality-check" && (
           <RealityCheck idea={idea} qa={qa} profile={profile}
             onProceed={() => setPhase("output-select")}
-            onBack={backQ} />
+            onBack={backQ} appLanguage={appLanguage} />
         )}
 
         {/* OUTPUT SELECT */}
@@ -2641,19 +3496,30 @@ ${ctxStr(pairs)}`;
         {phase === "output" && outType && outputs[outType] && (
           <div style={{ animation: "fadeIn .3s ease" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.4rem", flexWrap: "wrap", gap: "0.55rem" }}>
-              <span style={{ color: LIME, fontSize: "10px", letterSpacing: "3px", textTransform: "uppercase", fontFamily: "monospace", fontWeight: "bold" }}>{OUTPUTS.find(o => o.key === outType)?.icon} {OUTPUTS.find(o => o.key === outType)?.label}</span>
+              <span style={{ color: LIME, fontSize: "10px", letterSpacing: "3px", textTransform: "uppercase", fontFamily: "monospace", fontWeight: "bold" }}>{OUTPUTS.find(o => o.key === outType)?.icon} {t(`${outType}_label`, appLanguage) || OUTPUTS.find(o => o.key === outType)?.label}</span>
               <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
                 <button className="gh" style={{ ...G.ghost, color: copyFeedback ? LIME : "rgba(255,255,255,0.5)", borderColor: copyFeedback ? LIME : "#1c1c1c" }} onClick={handleCopyRaw}>
-                  {copyFeedback ? "✓ Copied!" : "📋 Copy Raw"}
+                  {copyFeedback ? (appLanguage === "sw" ? "✓ Imenakili!" : appLanguage === "es" ? "✓ ¡Copiado!" : appLanguage === "fr" ? "✓ Copié !" : appLanguage === "de" ? "✓ Kopiert!" : appLanguage === "ar" ? "✓ تم النسخ!" : "✓ Copied!") : (appLanguage === "sw" ? "📋 Nakili Faili" : appLanguage === "es" ? "📋 Copiar Texto" : appLanguage === "fr" ? "📋 Copier brut" : appLanguage === "de" ? "📋 Text kopieren" : appLanguage === "ar" ? "📋 نسخ النص" : "📋 Copy Raw")}
                 </button>
-                <button className="gh" style={G.ghost} onClick={handleExportFile}>📥 Save (.md)</button>
-                <button className="gh" style={G.ghost} onClick={async () => { setOutputs(p => { const n = { ...p }; delete n[outType]; return n; }); await generate(outType); }}>↻ Regen</button>
-                <button className="gh" style={G.ghost} onClick={() => setPhase("output-select")}>← All Products</button>
-                <button className="gh" style={G.ghost} onClick={resetIdea}>New Idea</button>
+                <button className="gh" style={G.ghost} onClick={handleExportFile}>
+                  {appLanguage === "sw" ? "📥 Hifadhi (.md)" : appLanguage === "es" ? "📥 Guardar (.md)" : appLanguage === "fr" ? "📥 Sauvegarder (.md)" : appLanguage === "de" ? "📥 Speichern (.md)" : appLanguage === "ar" ? "📥 حفظ (.md)" : "📥 Save (.md)"}
+                </button>
+                <button className="gh" style={{ ...G.ghost, color: GOLD, borderColor: `${GOLD}40` }} onClick={handleExportPDF}>
+                  {appLanguage === "sw" ? "📄 Hamisha PDF" : appLanguage === "es" ? "📄 Exportar PDF" : appLanguage === "fr" ? "📄 Exporter PDF" : appLanguage === "de" ? "📄 PDF exportieren" : appLanguage === "ar" ? "📄 تصدير PDF" : "📄 Export PDF"}
+                </button>
+                <button className="gh" style={G.ghost} onClick={async () => { setOutputs(p => { const n = { ...p }; delete n[outType]; return n; }); await generate(outType, true); }}>
+                  {appLanguage === "sw" ? "↻ Zaa Tena" : appLanguage === "es" ? "↻ Regenerar" : appLanguage === "fr" ? "↻ Régénérer" : appLanguage === "de" ? "↻ Regenerieren" : appLanguage === "ar" ? "↻ إعادة توليد" : "↻ Regen"}
+                </button>
+                <button className="gh" style={G.ghost} onClick={() => setPhase("output-select")}>
+                  {appLanguage === "sw" ? "← Bidhaa Zote" : appLanguage === "es" ? "← Todo" : appLanguage === "fr" ? "← Tous les produits" : appLanguage === "de" ? "← Alle Produkte" : appLanguage === "ar" ? "← جميع المنتجات" : "← All Products"}
+                </button>
+                <button className="gh" style={G.ghost} onClick={resetIdea}>
+                  {appLanguage === "sw" ? "Wazo Jipya" : appLanguage === "es" ? "Nueva Idea" : appLanguage === "fr" ? "Nouvelle Idée" : appLanguage === "de" ? "Neue Idee" : appLanguage === "ar" ? "فكرة جديدة" : "New Idea"}
+                </button>
               </div>
             </div>
             <ErrorBoundary>
-              <div style={{ background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", padding: (outType === "mindmap" || outType === "promptpack") ? "0" : "1.8rem" }}>
+              <div id="forge-pdf-export-root" style={{ background: "#1B1815", border: "1px solid #2E2A24", borderRadius: "6px", padding: (outType === "mindmap" || outType === "promptpack") ? "0" : "1.8rem" }}>
                 {outType === "mindmap" && <MindMap data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
                 {outType === "blueprint" && <Blueprint data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
                 {outType === "roadmap" && <Roadmap data={outputs[outType]} onDeepDive={triggerDeepDiveIntel} />}
@@ -2668,16 +3534,7 @@ ${ctxStr(pairs)}`;
           </div>
         )}
 
-        {/* DATA & PRIVACY INFORMATION DIALOG MODAL LINK / FOOTER */}
-        {!isFocusMode && (
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "1rem", padding: "2rem 0", borderTop: "1px solid #141414", marginTop: "4rem" }}>
-          <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "10px" }}>FORGE v1.0 offline-first engine</span>
-          <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>
-          <button onClick={() => setShowPrivacyDialog(true)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: "10px", fontFamily: "monospace", textDecoration: "underline", cursor: "pointer" }}>
-            Data & AI Operations
-          </button>
-        </div>
-        )}
+
 
         {showPrivacyDialog && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 4000, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(5px)" }}>
@@ -2709,6 +3566,52 @@ ${ctxStr(pairs)}`;
           </div>
         )}
         <CommandPalette isOpen={isCommandOpen} onClose={() => setIsCommandOpen(false)} navigateTo={(tab) => { /* TODO */ }} />
+
+        {/* Floating Bright Colored Back Button (Bottom Right) */}
+        {phaseHistory.length > 0 && phase !== "ignition" && (
+          <button
+            onClick={() => {
+              const lastPhase = phaseHistory[phaseHistory.length - 1];
+              setPhase(lastPhase);
+            }}
+            style={{
+              position: "fixed",
+              bottom: "1.85rem",
+              right: "1.85rem",
+              zIndex: 9999,
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              background: LIME,
+              color: "#0c0d0b",
+              border: "none",
+              borderRadius: "50px",
+              padding: "0.65rem 1.1rem",
+              fontSize: "11px",
+              fontWeight: "900",
+              letterSpacing: "1.5px",
+              cursor: "pointer",
+              fontFamily: "monospace",
+              boxShadow: "0 0 20px rgba(200, 255, 0, 0.45), 0 4px 10px rgba(0,0,0,0.5)",
+              transition: "transform 0.1s ease, filter 0.15s ease",
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.transform = "scale(1.08)";
+              e.currentTarget.style.filter = "brightness(1.1)";
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.transform = "scale(1)";
+              e.currentTarget.style.filter = "brightness(1)";
+            }}
+            title="Go Back / Rudi Nyuma"
+          >
+            <ArrowLeft size={16} strokeWidth={2.8} style={{ color: "#0c0d0b" }} />
+            <span>{appLanguage === "sw" ? "NYUMA" : appLanguage === "es" ? "VOLVER" : appLanguage === "fr" ? "RETOUR" : appLanguage === "de" ? "ZURÜCK" : appLanguage === "ar" ? "رجوع" : "BACK"}</span>
+          </button>
+        )}
+
+        {/* Google Translate Hidden Element */}
+        <div id="google_translate_element" style={{ display: "none" }} />
 
         <div style={{ height: "5rem" }} />
       </div>

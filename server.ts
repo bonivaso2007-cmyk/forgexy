@@ -36,6 +36,14 @@ async function startServer() {
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.removeHeader("X-Powered-By");
+
+    // Handle pre-flight OPTIONS gracefully to prevent any platform HTTP 405 errors
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      return res.sendStatus(204);
+    }
     next();
   });
 
@@ -244,7 +252,7 @@ async function startServer() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: req.body.model || "llama-3.1-8b-instant",
+                model: req.body.model || "llama-3.3-70b-versatile",
                 messages: groqMessages,
                 max_completion_tokens: max_tokens || 1024,
                 temperature: 1,
@@ -289,8 +297,16 @@ async function startServer() {
         res.write("data: [DONE]\n");
         res.end();
     } catch (e: any) {
-        console.error("Groq proxy error:", e);
-        res.status(500).json({ error: e.message || "Groq proxy error" });
+        console.error("Groq proxy error caught:", e);
+        if (!res.headersSent) {
+            console.warn("Groq proxy error occurred before headers sent. Initiating live Gemini fallback stream.");
+            return streamGeminiFallback(res, system, messages, max_tokens);
+        } else {
+            console.error("Groq proxy error occurred after headers sent. Appending final fallback error block.");
+            res.write(`data: ${JSON.stringify({ delta: { text: `\n[Stream Error]: ${e.message || "Connection interrupted."}` } })}\n`);
+            res.write("data: [DONE]\n");
+            res.end();
+        }
     }
   });
 
@@ -427,11 +443,12 @@ async function startServer() {
                 <p>The server is running dynamically, but static assets could not be located at any of these target locations:</p>
                 <pre>Target path: ${distPath}</pre>
                 <div class="hint">
-                  <strong>How to fix on Render:</strong><br/>
-                  Go to your Render Dashboard settings and update your <strong>Build Command</strong> to:<br/>
-                  <code>npm run build</code>
+                  <strong>How to fix on Cloudflare Pages:</strong><br/>
+                  Go to your Cloudflare Dashboard and update your <strong>Build Settings</strong> to:<br/>
+                  - Build command: <code>npm run build</code><br/>
+                  - Build output directory: <code>dist</code>
                 </div>
-                <p>This will guarantee that our builder transpiles the App into <code>dist/</code> and compiles the server into <code>dist/server.cjs</code> prior to launching <code>npm start</code>.</p>
+                <p>This will guarantee that our builder transpiles the App into <code>dist/</code> and compiles the server prior to deployment.</p>
               </div>
             </body>
           </html>

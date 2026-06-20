@@ -1,6 +1,6 @@
 
 export const API = "/api/groq-proxy";
-export const MODEL = "llama-3.1-8b-instant";
+export const MODEL = "llama-3.3-70b-versatile";
 
 let lastCallTime = 0;
 

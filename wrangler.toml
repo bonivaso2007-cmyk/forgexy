@@ -1,0 +1,9 @@
+# Cloudflare Pages / Workers Deployment Configuration
+# Build for the globe with edge functions
+name = "forge-idea-engine"
+pages_build_output_dir = "./dist"
+
+[vars]
+# Ensure you attach these secrets in your Cloudflare dashboard under pages configuration:
+# GEMINI_API_KEY = "your-api-key"
+# GROQ_API_KEY = "your-api-key"
