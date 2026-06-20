@@ -3292,7 +3292,6 @@ ${ctxStr(pairs)}`;
             <textarea style={{ ...G.ta, height: "150px" }} placeholder={"No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live."} value={idea} onChange={e => setIdea(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !loading) ignite(); }} />
             <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "0.9rem" }}>
               <button style={{ ...G.btn, opacity: (!idea.trim() || loading) ? 0.25 : 1 }} onClick={ignite} disabled={!idea.trim() || loading}>{loading ? "LOADING…" : "IGNITE →"}</button>
-              <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "10px" }}>⌘ + Enter</span>
             </div>
             {err && <div style={G.err}>{err}</div>}
           </div>
