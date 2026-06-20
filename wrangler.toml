@@ -1,6 +1,7 @@
 # Cloudflare Pages / Workers Deployment Configuration
 # Build for the globe with edge functions
-name = "forge-idea-engine"
+# wrangler.toml
+name = 'forgexy'
 pages_build_output_dir = "./dist"
 
 [vars]
