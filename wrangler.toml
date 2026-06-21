@@ -6,6 +6,7 @@ compatibility_date = "2026-06-20"
 
 [assets]
 directory = "./dist"
+not_found_handling = "single-page-application"
 
 [vars]
 # Ensure you attach these secrets in your Cloudflare dashboard under pages configuration:
