@@ -1,6 +1,6 @@
 # Cloudflare Pages / Workers Deployment Configuration
 # Build for the globe with edge functions
-name = "forge-idea-engine"
+name = "forgexy"
 pages_build_output_dir = "./dist"
 compatibility_date = "2026-06-20"
 
