@@ -194,7 +194,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
       return this.props.fallback || (
         <div style={{ padding: "3rem 1.5rem", border: "1px dashed rgba(255, 60, 120, 0.4)", borderRadius: "8px", background: "rgba(255, 60, 120, 0.04)", fontFamily: "monospace", textAlign: "center" }}>
           <span style={{ fontSize: "2rem" }}>⚠️</span>
-          <h3 style={{ color: "#FF3C78", fontSize: "0.95rem", margin: "0.75rem 0 0.4rem", fontWeight: "bold", letterSpacing: "1px" }}>RENDER INTEGRITY CHALLENGE</h3>
+          <h3 style={{ color: "#FF3C78", fontSize: "0.95rem", margin: "0.75rem 0 0.4rem", fontWeight: "bold", letterSpacing: "1px" }}>DISPLAY INTEGRITY CHALLENGE</h3>
           <p style={{ color: "rgba(255,255,255,0.65)", fontSize: "0.76rem", lineHeight: "1.5", maxWidth: "440px", margin: "0 auto 1.25rem" }}>
             The active AI forge payload contains unstructured symbolic elements incompatible with the visual representation nodes. This has been safely isolated.
           </p>
@@ -202,7 +202,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
             onClick={() => this.setState({ hasError: false, error: null })}
             style={{ background: "#C8FF00", color: "#000", border: "none", borderRadius: "4px", padding: "6px 14px", fontSize: "10px", fontWeight: "bold", fontFamily: "monospace", cursor: "pointer" }}
           >
-            RESET RENDERER
+            RESET DISPLAY
           </button>
         </div>
       );
