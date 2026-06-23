@@ -1712,7 +1712,8 @@ export default function App() {
   
   const [phase, setPhase] = useState(() => {
     try {
-      return localStorage.getItem("forge_draft_phase") || "ignition";
+      const persisted = localStorage.getItem("forge_draft_phase") || "ignition";
+      return persisted === "generating" ? "ignition" : persisted;
     } catch {
       return "ignition";
     }
@@ -1801,7 +1802,9 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("forge_draft_phase", phase);
+      if (phase !== "generating") {
+        localStorage.setItem("forge_draft_phase", phase);
+      }
       localStorage.setItem("forge_draft_idea", idea);
       localStorage.setItem("forge_draft_qa", JSON.stringify(qa));
     } catch (e) {
@@ -1977,27 +1980,74 @@ export default function App() {
   // load session on mount
   useEffect(() => {
     (async () => {
-      // 1. Attempt dynamic restoration of physical-isolation key material
-      const vaultSession = sessionStorage.getItem("forge_vault_session");
-      if (vaultSession) {
-        try {
-          const { salt, password } = JSON.parse(vaultSession);
-          await initializeEncryption(password, salt);
-        } catch (e) {
-          console.error("Cryptographic restoring procedure interrupted:", e);
+      try {
+        // 1. Attempt dynamic restoration of physical-isolation key material
+        const vaultSession = sessionStorage.getItem("forge_vault_session");
+        if (vaultSession) {
+          try {
+            const { salt, password } = JSON.parse(vaultSession);
+            await initializeEncryption(password, salt);
+          } catch (e) {
+            console.error("Cryptographic restoring procedure interrupted:", e);
+          }
         }
-      }
 
-      // 2. Load and increment local safe analytics index
-      const currentAnalytics = await store.get("forge_analytics") || { sessionCount: 0, realityCheckCount: 0 };
-      currentAnalytics.sessionCount = (currentAnalytics.sessionCount || 0) + 1;
-      await store.set("forge_analytics", currentAnalytics);
-      setAnalytics(currentAnalytics);
-      trackEvent("app_loaded", "lifecycle", "v1.0");
+        // 2. Load and increment local safe analytics index
+        const currentAnalytics = await store.get("forge_analytics") || { sessionCount: 0, realityCheckCount: 0 };
+        currentAnalytics.sessionCount = (currentAnalytics.sessionCount || 0) + 1;
+        await store.set("forge_analytics", currentAnalytics);
+        setAnalytics(currentAnalytics);
+        trackEvent("app_loaded", "lifecycle", "v1.0");
 
-      const session = await store.get("session");
-      if (!session) {
-        // Automatic high-integrity Guest Sandbox Entry with globally unique, per-session UID
+        const session = await store.get("session");
+        if (!session) {
+          // Automatic high-integrity Guest Sandbox Entry with globally unique, per-session UID
+          const guestUid = getOrCreateGuestUid();
+          setUser({ uid: guestUid, email: "guest@forge.ai", isGuest: true, name: "Guest Visionary" });
+          setProfile({
+            name: "Guest Visionary",
+            age: "25",
+            city: "Silicon Valley",
+            country: "Global Target",
+            industry: "Tech",
+            market: "Global SaaS",
+            targetCustomer: "Developers & Builders",
+            stage: "Idea Phase",
+            techLevel: "Intermediate",
+            funding: "Self-funded",
+            constraints: "Time-limited",
+            bio: "Guest founder exploring futuristic companies."
+          });
+          setAppState("app");
+          return;
+        }
+        
+        // 3. Absolute protection: If local session exists but key has been purged from memory, force login (bypass for OAuth sessions)
+        if (!activeEncryptionKey && session.authType !== "oauth") {
+          await store.del("session");
+          setAppState("auth");
+          return;
+        }
+
+        let u = await store.get(`user:${session.uid}`);
+        if (!u && session.authType === "oauth") {
+          u = {
+            uid: session.uid,
+            email: session.email,
+            name: session.name,
+            authType: "oauth",
+            createdAt: Date.now()
+          };
+          await store.set(`user:${session.uid}`, u);
+        }
+
+        if (!u) { setAppState("auth"); return; }
+        const p = await store.get(`profile:${session.uid}`);
+        setUser(u);
+        if (!p || p.incomplete === true || p.name === "Guest Visionary" || p.country === "Global Target") { setAppState("onboarding"); return; }
+        setProfile(p); setAppState("app");
+      } catch (bootErr) {
+        console.error("Forge system boot error, falling back to guest mode:", bootErr);
         const guestUid = getOrCreateGuestUid();
         setUser({ uid: guestUid, email: "guest@forge.ai", isGuest: true, name: "Guest Visionary" });
         setProfile({
@@ -2015,33 +2065,7 @@ export default function App() {
           bio: "Guest founder exploring futuristic companies."
         });
         setAppState("app");
-        return;
       }
-      
-      // 3. Absolute protection: If local session exists but key has been purged from memory, force login (bypass for OAuth sessions)
-      if (!activeEncryptionKey && session.authType !== "oauth") {
-        await store.del("session");
-        setAppState("auth");
-        return;
-      }
-
-      let u = await store.get(`user:${session.uid}`);
-      if (!u && session.authType === "oauth") {
-        u = {
-          uid: session.uid,
-          email: session.email,
-          name: session.name,
-          authType: "oauth",
-          createdAt: Date.now()
-        };
-        await store.set(`user:${session.uid}`, u);
-      }
-
-      if (!u) { setAppState("auth"); return; }
-      const p = await store.get(`profile:${session.uid}`);
-      setUser(u);
-      if (!p || p.incomplete === true || p.name === "Guest Visionary" || p.country === "Global Target") { setAppState("onboarding"); return; }
-      setProfile(p); setAppState("app");
     })();
   }, []);
 
