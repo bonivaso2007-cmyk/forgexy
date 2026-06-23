@@ -15,7 +15,14 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     if (!geminiKey) {
       return new Response(
         "data: " + JSON.stringify({ delta: { text: `\n[Engine Error]: Neither GROQ_API_KEY nor GEMINI_API_KEY is configured in Cloudflare. Please set them in your dashboard secrets.` } }) + "\n\ndata: [DONE]\n",
-        { headers: { "Content-Type": "text/event-stream" } }
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization"
+          }
+        }
       );
     }
 
@@ -59,7 +66,14 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       const errText = await response.text();
       return new Response(
         "data: " + JSON.stringify({ delta: { text: `\n[Fallback Error]: ${response.status} - ${errText}` } }) + "\n\ndata: [DONE]\n",
-        { headers: { "Content-Type": "text/event-stream" } }
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization"
+          }
+        }
       );
     }
 
@@ -130,7 +144,10 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
       }
     });
   };
@@ -218,11 +235,26 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
       }
     });
   } catch (e: any) {
     console.error("Groq edge call failed:", e);
     return streamGeminiFallback(e.message || "Connection failed");
   }
+};
+
+export const onRequestOptions = async () => {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
+    }
+  });
 };

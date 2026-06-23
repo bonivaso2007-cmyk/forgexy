@@ -137,14 +137,35 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*"
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
       }
     });
 
   } catch (error: any) {
     return new Response(
       "data: " + JSON.stringify({ delta: { text: `Internal Server Error: ${error.message}` } }) + "\n\ndata: [DONE]\n",
-      { headers: { "Content-Type": "text/event-stream" } }
+      {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization"
+        }
+      }
     );
   }
+};
+
+export const onRequestOptions = async () => {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
+    }
+  });
 };

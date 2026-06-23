@@ -919,10 +919,22 @@ function RealityCheck({ idea, qa, profile, onProceed, onBack, appLanguage = "en"
       const langName = getLangName(appLanguage);
       let sys = `You are FORGE REALITY CHECK — a brutal, honest advisor for early-stage founders.
 Analyse this idea against the founder's specific constraints. Be direct. No sugarcoating.
-Structure: ## Feasibility Score (X/10)\n## Can You Actually Build This?\n## Market Reality Check\n## Your Unfair Advantage\n## The Single Biggest Risk\n## Verdict`;
+
+CRITICAL MANDATES:
+1. You MUST replace "[score]" with an actual real score from 1 to 10 (for example: "## Feasibility Score: 8/10" or "## Feasibility Score: 4/10"). Never leave the word score or X in there.
+2. Under "What We Discussed", summarize the main points, core ideas, and helper remarks from the questions and answers in simple, plain, jargon-free words.
+
+Structure:
+## Feasibility Score: [score]/10
+## What We Discussed
+## Can You Actually Build This?
+## Market Reality Check
+## Your Unfair Advantage
+## The Single Biggest Risk
+## Verdict`;
 
       if (appLanguage !== "en") {
-        sys += `\n\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST write your entire response, including all section headings (such as "Feasibility Score", "Can You Actually Build This?", "Market Reality Check", "Your Unfair Advantage", "The Single Biggest Risk", "Verdict") and all paragraphs/verdicts completely in ${langName}. Do NOT use English under any circumstances.`;
+        sys += `\n\nCRITICAL LANGUAGE MANDATE: Since the user selected ${langName}, you MUST write your entire response, including all section headings (such as "Feasibility Score", "What We Discussed", "Can You Actually Build This?", "Market Reality Check", "Your Unfair Advantage", "The Single Biggest Risk", "Verdict") and all paragraphs/verdicts completely in ${langName}. Do NOT use English under any circumstances.`;
       }
 
       const prompt = `${profileContext(profile)}\n${marketContext(profile)}${memoriesPart}\n\nIdea: "${idea}"\n\nFounder's thinking:\n${qa.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n")}\n\nGive a reality check tailored to THIS specific founder's constraints, location, and past co-founder memory files.`;

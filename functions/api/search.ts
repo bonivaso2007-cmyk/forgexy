@@ -110,13 +110,32 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     return new Response(JSON.stringify({ snippets: snippets.slice(0, 6) }), {
       headers: { 
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*" 
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization" 
       },
     });
   } catch (error: any) {
     return new Response(JSON.stringify({ snippets: [], error: error.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization" 
+      },
     });
   }
+};
+
+export const onRequestOptions = async () => {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
+    }
+  });
 };
