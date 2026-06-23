@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Component, ErrorInfo, ReactNode } from "react";
 import { Archive, User, Zap, Hammer, Globe, ArrowLeft } from "lucide-react";
 import DOMPurify from "dompurify";
+import i18n, { t, LANGUAGES_LIST, getQSys, getLangName } from "./i18n";
 import PitchDeck from "./components/PitchDeck";
 import CommandPalette from "./components/CommandPalette";
+import { Speedometer } from "./components/Speedometer";
 import { exportComponentToPDF } from "./lib/pdfExporter";
 import forgeLogo from "./assets/images/forge_logo_1781634347253.jpg";
 import { auth as firebaseAuth, googleProvider, db, handleFirestoreError, OperationType } from "./lib/firebase";
@@ -1519,492 +1521,6 @@ const OUTPUTS = [
   { key: "promptpack", icon: "💻", label: "Prompt Pack", desc: "Cursor/Claude Setup & Prompts" },
 ];
 
-const LANGUAGES_LIST = [
-  { code: "sw", name: "Kiswahili (Swahili) 🇹🇿", native: "Kiswahili" },
-  { code: "en", name: "English 🇺🇸", native: "English" },
-  { code: "es", name: "Español (Spanish)", native: "Español" },
-  { code: "fr", name: "Français (French)", native: "Français" },
-  { code: "de", name: "Deutsch (German)", native: "Deutsch" },
-  { code: "ar", name: "العربية (Arabic)", native: "العربية" },
-  { code: "hi", name: "हिन्दी (Hindi)", native: "हिन्दी" },
-  { code: "zh-CN", name: "简体中文 (Chinese)", native: "简体中文" },
-  { code: "pt", name: "Português", native: "Português" },
-  { code: "it", name: "Italiano", native: "Italiano" },
-  { code: "ru", name: "Русский", native: "Русский" },
-  { code: "ja", name: "日本語", native: "日本語" },
-  { code: "ko", name: "한국어", native: "한국어" },
-  { code: "tr", name: "Türkçe", native: "Türkçe" },
-  { code: "vi", name: "Tiếng Việt", native: "Tiếng Việt" },
-  { code: "id", name: "Bahasa Indonesia", native: "Bahasa Indonesia" },
-  { code: "af", name: "Afrikaans", native: "Afrikaans" },
-  { code: "sq", name: "Shqip", native: "Shqip" },
-  { code: "am", name: "አማርኛ", native: "Amharic" },
-  { code: "hy", name: "Հայերեն", native: "Armenian" },
-  { code: "az", name: "Azərbaycan", native: "Azerbaijani" },
-  { code: "eu", name: "Euskara", native: "Basque" },
-  { code: "be", name: "Беларуская", native: "Belarusian" },
-  { code: "bn", name: "বাংলা", native: "Bengali" },
-  { code: "bs", name: "Bosanski", native: "Bosnian" },
-  { code: "bg", name: "Български", native: "Bulgarian" },
-  { code: "ca", name: "Català", native: "Catalan" },
-  { code: "ceb", name: "Cebuano", native: "Cebuano" },
-  { code: "ny", name: "Chichewa", native: "Chichewa" },
-  { code: "co", name: "Corsu", native: "Corsican" },
-  { code: "hr", name: "Hrvatski", native: "Croatian" },
-  { code: "cs", name: "Čeština", native: "Czech" },
-  { code: "da", name: "Dansk", native: "Danish" },
-  { code: "nl", name: "Nederlands", native: "Dutch" },
-  { code: "eo", name: "Esperanto", native: "Esperanto" },
-  { code: "et", name: "Eesti", native: "Estonian" },
-  { code: "tl", name: "Tagalog", native: "Filipino" },
-  { code: "fi", name: "Suomi", native: "Finnish" },
-  { code: "fy", name: "Frysk", native: "Frisian" },
-  { code: "gl", name: "Galego", native: "Galician" },
-  { code: "ka", name: "ქართული", native: "Georgian" },
-  { code: "el", name: "Ελληνικά", native: "Greek" },
-  { code: "gu", name: "ગુજરાતી", native: "Gujarati" },
-  { code: "ht", name: "Kreyòl Ayisyen", native: "Haitian Creole" },
-  { code: "ha", name: "Hausa", native: "Hausa" },
-  { code: "haw", name: "Ōlelo Hawaiʻi", native: "Hawaiian" },
-  { code: "iw", name: "עברית", native: "Hebrew" },
-  { code: "hmn", name: "Hmoob", native: "Hmong" },
-  { code: "hu", name: "Magyar", native: "Hungarian" },
-  { code: "is", name: "Íslenska", native: "Icelandic" },
-  { code: "ig", name: "Igbo", native: "Igbo" },
-  { code: "ga", name: "Gaeilge", native: "Irish" },
-  { code: "jv", name: "Jawa", native: "Javanese" },
-  { code: "kn", name: "ಕನ್ನಡ", native: "Kannada" },
-  { code: "kk", name: "Қазақ тілі", native: "Kazakh" },
-  { code: "km", name: "ខ្មែរ", native: "Khmer" },
-  { code: "rw", name: "Kinyarwanda", native: "Kinyarwanda" },
-  { code: "ku", name: "Kurdî", native: "Kurdish" },
-  { code: "ky", name: "Кыргызча", native: "Kyrgyz" },
-  { code: "lo", name: "ລາວ", native: "Lao" },
-  { code: "la", name: "Latina", native: "Latin" },
-  { code: "lv", name: "Latviešu", native: "Latvian" },
-  { code: "lt", name: "Lietuvių", native: "Lithuanian" },
-  { code: "lb", name: "Lëtzebuergesch", native: "Luxembourgish" },
-  { code: "mk", name: "Македонски", native: "Macedonian" },
-  { code: "mg", name: "Malagasy", native: "Malagasy" },
-  { code: "ms", name: "Bahasa Melayu", native: "Malay" },
-  { code: "ml", name: "മലയാളം", native: "Malayalam" },
-  { code: "mt", name: "Malti", native: "Maltese" },
-  { code: "mi", name: "Māori", native: "Maori" },
-  { code: "mr", name: "मराठी", native: "Marathi" },
-  { code: "mn", name: "Монгол", native: "Mongolian" },
-  { code: "my", name: "မြန်မာ", native: "Myanmar (Burmese)" },
-  { code: "ne", name: "नेपाली", native: "Nepali" },
-  { code: "no", name: "Norsk", native: "Norwegian" },
-  { code: "or", name: "ଓଡ଼ିଆ", native: "Odia" },
-  { code: "ps", name: "پښتو", native: "Pashto" },
-  { code: "fa", name: "فارسی", native: "Persian" },
-  { code: "pl", name: "Polski", native: "Polish" },
-  { code: "pa", name: "ਪੰਜਾਬੀ", native: "Punjabi" },
-  { code: "ro", name: "Română", native: "Romanian" },
-  { code: "sm", name: "Gagana Sāmoa", native: "Samoan" },
-  { code: "gd", name: "Gàidhlig", native: "Scots Gaelic" },
-  { code: "sr", name: "Српски", native: "Serbian" },
-  { code: "st", name: "Sesotho", native: "Sesotho" },
-  { code: "sn", name: "ChiShona", native: "Shona" },
-  { code: "sd", name: "سنڌي", native: "Sindhi" },
-  { code: "si", name: "සිංಹල", native: "Sinhala" },
-  { code: "sk", name: "Slovenčina", native: "Slovak" },
-  { code: "sl", name: "Slovenščina", native: "Slovenian" },
-  { code: "so", name: "Soomaali", native: "Somali" },
-  { code: "su", name: "Sunda", native: "Sundanese" },
-  { code: "tg", name: "Тоҷикӣ", native: "Tajik" },
-  { code: "ta", name: "தமிழ்", native: "Tamil" },
-  { code: "tt", name: "Татар", native: "Tatar" },
-  { code: "te", name: "తెలుగు", native: "Telugu" },
-  { code: "th", name: "ไทย", native: "Thai" },
-  { code: "ug", name: "ئۇيغۇرچە", native: "Uyghur" },
-  { code: "uk", name: "Українська", native: "Ukrainian" },
-  { code: "ur", name: "اردو", native: "Urdu" },
-  { code: "uz", name: "Oʻzbek", native: "Uzbek" },
-  { code: "cy", name: "Cymraeg", native: "Welsh" },
-  { code: "xh", name: "IsiXhosa", native: "Xhosa" },
-  { code: "yi", name: "ייִדיש", native: "Yiddish" },
-  { code: "yo", name: "Yorùbá", native: "Yoruba" },
-  { code: "zu", name: "IsiZulu", native: "Zulu" },
-];
-
-const getLangName = (code: string) => {
-  const found = LANGUAGES_LIST.find(l => l.code === code);
-  if (found) {
-    if (found.code === "ar") return "Arabic (العربية)";
-    if (found.code === "sw") return "Swahili (Kiswahili)";
-    if (found.code === "es") return "Spanish (Español)";
-    if (found.code === "fr") return "French (Français)";
-    if (found.code === "de") return "German (Deutsch)";
-    return found.name || found.native;
-  }
-  return "English";
-};
-
-function getQSys(langCode = "en") {
-  const langName = getLangName(langCode);
-  return `You are FORGE — an incredibly simple, kind, and helpful business buddy who asks questions using basic school-level words.
-FORMAT MANDATE:
-1. Start with a 2-word title prefixed with ** and suffixed with ** (e.g., **The Problem**, **The Buyers**).
-2. On the next line, ask exactly ONE extremely short, ultra-simple question of maximum 8-10 words. It must be written with the most basic, plain everyday words possible.
-3. No business terms, no complex words, no startup jargon. (Do NOT use words like: co-founder, demographic, validation, constraints, monetization, acquisition, leverage, metrics, UVP).
-4. Make it so easy that anyone can read the question and type an answer in 5 seconds.
-${langCode !== "en" ? `5. The 2-word title and the question MUST be completely written/asked in ${langName}.` : ""}`;
-}
-
-const UI_TRANSLATIONS: Record<string, Record<string, string>> = {
-  English: {
-    next: "NEXT →",
-    save: "SAVING…",
-    enter: "ENTER FORGE SYSTEM →",
-    back: "BACK",
-    reset: "RESET",
-    search_placeholder: "Ask anything…",
-    honest_placeholder: "Honest. No performance.",
-    steps_completed: "QUESTIONS COMPLETED",
-    ai_research_chat: "AI RESEARCH CHAT",
-    forge_intel: "FORGE INTEL",
-    concept_score: "Concept Score",
-    reality_check: "Reality Check",
-    strengths: "STRENGTHS",
-    critical_risks: "CRITICAL RISKS / GAPS",
-    live_market_data: "LIVE MARKET DATA VALIDATION",
-    co_founder_override: "CO-FOUNDER PROFILE EXCERPT",
-    generation_loading: "Generating strategic reports. This will take a moment...",
-    founder_profile: "FOUNDER PROFILE",
-    market_context: "MARKET CONTEXT",
-    focus_mode_btn: "Focus Mode",
-    view_history: "View History",
-    history_vault: "History Vault",
-    user_settings: "User Settings",
-    convert_any_lang: "Translate Web App",
-    mindmap_label: "Mind Map",
-    mindmap_desc: "Interactive visual landscape",
-    blueprint_label: "Blueprint",
-    blueprint_desc: "Concept, market, risks, metrics",
-    roadmap_label: "Roadmap",
-    roadmap_desc: "4-phase plan to dominance",
-    businessplan_label: "Business Plan",
-    businessplan_desc: "Lean plan across all pillars",
-    actionplan_label: "30-Day Plan",
-    actionplan_desc: "Checkable tasks. Real outcomes.",
-    swot_label: "SWOT",
-    swot_desc: "Ruthless strategic breakdown",
-    promptpack_label: "Prompt Pack",
-    promptpack_desc: "Cursor/Claude Setup & Prompts",
-    speak_customer: "Have you spoken to at least one real potential customer about this idea?",
-    yes_spoken: "Yes, I have",
-    not_yet: "Not yet",
-    warning_spoken: "⚠ No real conversations = unvalidated assumptions. The outputs will still generate but treat them as hypotheses, not facts. Your #1 action after this: talk to one real person.",
-    running_reality: "RUNNING REALITY CHECK…",
-    reality_complete: "REALITY CHECK COMPLETE",
-    build_outputs: "BUILD OUTPUTS →",
-    drop_idea_label: "Drop your raw idea",
-    idea_placeholder: "No polish needed. Half-baked is fine.\nRaw and messy is where the best ideas live.",
-    ignite_btn: "IGNITE →",
-    loading: "LOADING…",
-    core_deliverables_title: "Core Deliverables Checkpoints",
-    advanced_venture_title: "Advanced Venture Deliverables",
-    deeper_strategic_analytics: "DEEPER STRATEGIC ANALYTICS",
-    collapse: "COLLAPSE",
-    expand: "EXPAND"
-  },
-  Kiswahili: {
-    next: "MBELE →",
-    save: "INAHIFADHI…",
-    enter: "INGIA KWENYE MSINGI →",
-    back: "NYUMA",
-    reset: "ANZA UPYA",
-    search_placeholder: "Uliza chochote…",
-    honest_placeholder: "Sema ukweli bila kuigiza.",
-    steps_completed: "MASWALI YAMEKAMILIKA",
-    ai_research_chat: "MAZUNGUMZO YA UTAFITI WA AI",
-    forge_intel: "FORGE MAARIFA",
-    concept_score: "Alama ya Wazo",
-    reality_check: "Mwangaza wa Ukweli",
-    strengths: "Nguvu Muhimu",
-    critical_risks: "Hatari na Upungufu",
-    live_market_data: "Uthibitisho wa Soko la Moja kwa Moja",
-    co_founder_override: "Muhtasari wa Wasifu wa Mwanzilishi Mwenza",
-    generation_loading: "Kutengeneza ripoti za kimkakati. Hii itachukua muda mfupi...",
-    founder_profile: "WASIFU WA MWANZILISHI",
-    market_context: "MAZINGIRA YA SOKO",
-    focus_mode_btn: "Hali ya Kuzingatia",
-    view_history: "Angalia Kumbukumbu",
-    history_vault: "Kombora la Kumbukumbu",
-    user_settings: "Mipangilio ya Mtumiaji",
-    convert_any_lang: "Tafsiri Programu",
-    mindmap_label: "Ramani ya Mawazo",
-    mindmap_desc: "Taswira unganishi ya mawazo",
-    blueprint_label: "Ramani ya Mradi",
-    blueprint_desc: "Dhana, soko, hatari, na vipimo",
-    roadmap_label: "Mpango Kazi",
-    roadmap_desc: "Awamu 4 kuelekea kutawala soko",
-    businessplan_label: "Mpango wa Biashara",
-    businessplan_desc: "Mpango mwepesi wa mihimili yote",
-    actionplan_label: "Mpango wa Siku 30",
-    actionplan_desc: "Kazi za kufanya na matokeo halisi",
-    swot_label: "Uchambuzi wa SWOT",
-    swot_desc: "Uchambuzi mkali wa nguvu na udhaifu",
-    promptpack_label: "Kifurushi cha Amri",
-    promptpack_desc: "Mipangilio ya Cursor na Claude",
-    speak_customer: "Je, umezungumza na angalau mteja mmoja mtarajiwa kuhusu wazo hili?",
-    yes_spoken: "Ndio, nimefanya hivyo",
-    not_yet: "Bado",
-    warning_spoken: "⚠ Hakuna mazungumzo halisi = mawazo yasiyothibitishwa. Ripoti zitajazwa lakini zichukulie kama nadharia tu, sio ukweli. Hatua yako ya kwanza sasa: zungumza na mtu mmoja halisi.",
-    running_reality: "TATAFITI MWANGAZA WA UKWELI…",
-    reality_complete: "MWANGAZA WA UKWELI UMEKAMILIKA",
-    build_outputs: "TENGENEZA RIPOTI →",
-    drop_idea_label: "Weka wazo lako ghafi hapa",
-    idea_placeholder: "Hakuna haja ya kuipamba. Nusu-kamili inafaa kabisa.\nMawazo ya ghafi na ya fujo ndipo mawazo bora yanapoishi.",
-    ignite_btn: "WASHA →",
-    loading: "INAFUNGUA…",
-    core_deliverables_title: "Vigezo Kuu vya Mipango ya Mradi",
-    advanced_venture_title: "Mipango ya Juu ya Biashara",
-    deeper_strategic_analytics: "UCHAMBUZI WA KIKAKATI ZAIDI",
-    collapse: "KUNJA",
-    expand: "PANUA"
-  },
-  Español: {
-    next: "SIGUIENTE →",
-    save: "GUARDANDO…",
-    enter: "ENTRAR AL SISTEMA FORGE →",
-    back: "ATRÁS",
-    reset: "REINICIAR",
-    search_placeholder: "Pregunta lo que sea…",
-    honest_placeholder: "Sincero. Sin rodeos.",
-    steps_completed: "PREGUNTAS COMPLETADAS",
-    ai_research_chat: "CHAT DE INVESTIGACIÓN IA",
-    forge_intel: "CEREBRO FORGE",
-    concept_score: "Puntuación de Concepto",
-    reality_check: "Baño de Realidad",
-    strengths: "Fortalezas",
-    critical_risks: "Riesgos Críticos",
-    live_market_data: "Validación de Mercado en Vivo",
-    co_founder_override: "Extracto del Perfil del Cofundador",
-    generation_loading: "Generando informes estratégicos. Esto tomará un momento...",
-    founder_profile: "PERFIL DEL FUNDADOR",
-    market_context: "CONTEXTO DEL MERCADO",
-    focus_mode_btn: "Modo Enfoque",
-    view_history: "Ver Historial",
-    history_vault: "Bóveda de Historial",
-    user_settings: "Ajustes de Usuario",
-    convert_any_lang: "Traducir Aplicación",
-    mindmap_label: "Mapa Mental",
-    mindmap_desc: "Espacio de trabajo visual",
-    blueprint_label: "Plano Estructural",
-    blueprint_desc: "Concepto, mercado, riesgos, métricas",
-    roadmap_label: "Ruta de Trabajo",
-    roadmap_desc: "4 fases hacia el éxito",
-    businessplan_label: "Plan de Negocios",
-    businessplan_desc: "Plan ágil en todos los pilares",
-    actionplan_label: "Plan de 30 Días",
-    actionplan_desc: "Tareas claras y resultados reales",
-    swot_label: "DAFO",
-    swot_desc: "Análisis estratégico de fortalezas",
-    promptpack_label: "Pack de Prompts",
-    promptpack_desc: "Configuración para Cursor y Claude",
-    speak_customer: "¿Has hablado con al menos un cliente potencial real sobre esta idea?",
-    yes_spoken: "Sí, lo he hecho",
-    not_yet: "Aún no",
-    warning_spoken: "⚠ Sin conversaciones reales = suposiciones no validadas. Se generará la información pero considérala como hipótesis, no hechos. Tu acción #1 después de esto: habla con una persona real.",
-    running_reality: "EJECUTANDO BAÑO DE REALIDAD…",
-    reality_complete: "BAÑO DE REALIDAD COMPLETADO",
-    build_outputs: "CONSTRUIR INFORMES →",
-    drop_idea_label: "Deja tu idea en bruto",
-    idea_placeholder: "No se necesita pulir. Una idea a medias está bien.\nAhí en lo bruto y desordenado es donde viven las mejores ideas.",
-    ignite_btn: "ENCENDER →",
-    loading: "CARGANDO…",
-    core_deliverables_title: "Puntos de Control de Entregables Clave",
-    advanced_venture_title: "Entregables de Empresa Avanzados",
-    deeper_strategic_analytics: "ANÁLISIS ESTRATÉGICO PROFUNDO",
-    collapse: "COLAPSAR",
-    expand: "EXPANDIR"
-  },
-  Français: {
-    next: "SUIVANT →",
-    save: "ENREGISTREMENT…",
-    enter: "ENTRER DANS FORGE →",
-    back: "RETOUR",
-    reset: "RÉINITIALISER",
-    search_placeholder: "Demandez n'importe quoi…",
-    honest_placeholder: "Honnête. Sans détour.",
-    steps_completed: "QUESTIONS COMPLÉTÉES",
-    ai_research_chat: "CHAT DE RECHERCHE IA",
-    forge_intel: "INTELLIGÈNCE FORGE",
-    concept_score: "Score de Concept",
-    reality_check: "Vérité Brutale",
-    strengths: "Forces",
-    critical_risks: "Risques Critiques",
-    live_market_data: "Validation du Marché en Direct",
-    co_founder_override: "Extrait du Profil du Cofondateur",
-    generation_loading: "Génération de rapports stratégiques. Veuillez patienter...",
-    founder_profile: "PROFIL DU FONDATEUR",
-    market_context: "CONTEXTE DU MARCHÉ",
-    focus_mode_btn: "Mode Concentration",
-    view_history: "Voir l'Historique",
-    history_vault: "Coffre d'Historique",
-    user_settings: "Paramètres",
-    convert_any_lang: "Traduire l'Application",
-    mindmap_label: "Carte Mentale",
-    mindmap_desc: "Espace de travail visual",
-    blueprint_label: "Plan de Concept",
-    blueprint_desc: "Concept, marché, risques, indicateurs",
-    roadmap_label: "Route de Travail",
-    roadmap_desc: "Plan en 4 étapes",
-    businessplan_label: "Plan d'Affaires",
-    businessplan_desc: "Planification agile complète",
-    actionplan_label: "Plan de 30 Jours",
-    actionplan_desc: "Tâches à faire et objectifs clairs",
-    swot_label: "SWOT",
-    swot_desc: "Analyse des forces et faiblesses",
-    promptpack_label: "Pack de Prompts",
-    promptpack_desc: "Config de démarrage pour Claude/Cursor",
-    speak_customer: "Avez-vous parlé à au moins un client potentiel réel de cette idée ?",
-    yes_spoken: "Oui, je l'ai fait",
-    not_yet: "Pas encore",
-    warning_spoken: "⚠ Pas de conversations réelles = hypothèses non validées. Les rapports seront générés mais traitez-les comme des hypothèses. Votre action #1 après cela : parlez à une personne réelle.",
-    running_reality: "EXÉCUTION DU CONTRÔLE DE RÉALITÉ…",
-    reality_complete: "CONTRÔLE DE RÉALITÉ TERMINÉ",
-    build_outputs: "CRÉER LES RAPPORTS →",
-    drop_idea_label: "Déposez votre idée brute",
-    idea_placeholder: "Pas besoin de peaufiner. Une idée à moitié cuite est parfaite.\nC'est dans le brut et le désordre que vivent les meilleures idées.",
-    ignite_btn: "ALLUMER →",
-    loading: "CHARGEMENT…",
-    core_deliverables_title: "Points de Contrôle des Livrables Clés",
-    advanced_venture_title: "Livrables de Projet Avancés",
-    deeper_strategic_analytics: "ANALYSE STRATÉGIQUE APPROFONDIE",
-    collapse: "RÉDUIRE",
-    expand: "DÉVELOPPER"
-  },
-  Deutsch: {
-    next: "WEITER →",
-    save: "SPEICHERN…",
-    enter: "FORGE SYSTEM STARTEN →",
-    back: "ZURÜCK",
-    reset: "ZURÜCKSETZEN",
-    search_placeholder: "Frage stellen…",
-    honest_placeholder: "Ehrlich. Direkt.",
-    steps_completed: "FRAGEN BEANTWORTET",
-    ai_research_chat: "KI FORSCHUNGS-CHAT",
-    forge_intel: "FORGE ERKENNTNIS",
-    concept_score: "Konzept-Bewertung",
-    reality_check: "Realitäts-Check",
-    strengths: "Stärken",
-    critical_risks: "Kritische Risiken",
-    live_market_data: "Live-Marktdaten Validierung",
-    co_founder_override: "Mitgründer-Profil-Auszug",
-    generation_loading: "Erstelle Strategieberichte. Bitte warten...",
-    founder_profile: "GRÜNDERPROFIL",
-    market_context: "MARKTKONTEXT",
-    focus_mode_btn: "Fokus-Modus",
-    view_history: "Verlauf anzeigen",
-    history_vault: "Verlaufs-Tresor",
-    user_settings: "Einstellungen",
-    convert_any_lang: "App übersetzen",
-    mindmap_label: "Mindmap",
-    mindmap_desc: "Interaktive visuelle Übersicht",
-    blueprint_label: "Bauplan",
-    blueprint_desc: "Konzept, Markt, Risiken, Metriken",
-    roadmap_label: "Fahrplan",
-    roadmap_desc: "4 Phasen zur Marktführerschaft",
-    businessplan_label: "Businessplan",
-    businessplan_desc: "Schlanker Plan über alle Säulen",
-    actionplan_label: "30-Tage-Plan",
-    actionplan_desc: "Konkrete Aufgaben & reale Ziele",
-    swot_label: "SWOT-Analyse",
-    swot_desc: "Kompromisslose Stärken-Schwächen-Analyse",
-    promptpack_label: "Prompt-Paket",
-    promptpack_desc: "Cursor- & Claude-Anweisungen",
-    speak_customer: "Haben Sie mit mindestens einem echten potenziellen Kunden über diese Idee gesprochen?",
-    yes_spoken: "Ja, habe ich",
-    not_yet: "Noch nicht",
-    warning_spoken: "⚠ Keine echten Gespräche = ungeprüfte Annahmen. Die Berichte werden generiert, betrachten Sie sie jedoch als Hypothesen. Ihre wichtigste Maßnahme danach: Sprechen Sie mit einer echten Person.",
-    running_reality: "REALITÄTS-CHECK LÄUFT…",
-    reality_complete: "REALITÄTS-CHECK ABGESCHLOSSEN",
-    build_outputs: "BERICHTE ERSTELLEN →",
-    drop_idea_label: "Geben Sie Ihre rohe Idee ein",
-    idea_placeholder: "Kein Finetuning nötig. Halbfertig ist völlig okay.\nIn rohen und unordentlichen Gedanken entstehen die besten Ideen.",
-    ignite_btn: "ZÜNDEN →",
-    loading: "LÄDT…",
-    core_deliverables_title: "Kern-Meilensteine",
-    advanced_venture_title: "Erweiterte Meilensteine",
-    deeper_strategic_analytics: "TIEFENWERKENDE STRATEGISCHE ANALYSEN",
-    collapse: "EINKLAPPEN",
-    expand: "AUSKLAPPEN"
-  },
-  "العربية": {
-    next: "التالي ←",
-    save: "جاري الحفظ…",
-    enter: "الدخول إلى نظام فورج ←",
-    back: "رجوع",
-    reset: "إعادة تعيين",
-    search_placeholder: "اسأل عن أي شيء…",
-    honest_placeholder: "كن صريحاً. بدون مجاملة.",
-    steps_completed: "الأسئلة المنجزة",
-    ai_research_chat: "دردشة أبحاث الذكاء الاصطناعي",
-    forge_intel: "معلومات فورج",
-    concept_score: "تقييم الفكرة",
-    reality_check: "مواجهة الواقع",
-    strengths: "نقاط القوة",
-    critical_risks: "المخاطر والعيوب",
-    live_market_data: "التحقق من بيانات السوق الحية",
-    co_founder_override: "مقتطف من ملف المؤسس الشريك",
-    generation_loading: "جاري توليد التقارير الاستراتيجية. يرجى الانتظار لحظة...",
-    founder_profile: "ملف المؤسس",
-    market_context: "سياق السوق",
-    focus_mode_btn: "وضع التركيز",
-    view_history: "عرض السجل",
-    history_vault: "خزنة السجل",
-    user_settings: "إعدادات المستخدم",
-    convert_any_lang: "ترجمة التطبيق",
-    mindmap_label: "الخريطة الذهنية",
-    mindmap_desc: "المشهد البصري التفاعلي",
-    blueprint_label: "المخطط الهيكلي",
-    blueprint_desc: "المفهوم، السوق، المخاطر، والقياسات",
-    roadmap_label: "خارطة الطريق",
-    roadmap_desc: "خطة من 4 مراحل للريادة والسيطرة",
-    businessplan_label: "خطة العمل",
-    businessplan_desc: "خطة عمل مرنة لجميع ركائز المشروع",
-    actionplan_label: "خطة 30 يوماً",
-    actionplan_desc: "مهام قابلة للتحقق ونتائج ملموسة",
-    swot_label: "تحليل SWOT",
-    swot_desc: "تحليل استراتيجي لنقاط القوة والضعف",
-    promptpack_label: "حزمة الأوامر",
-    promptpack_desc: "إعدادات وأوامر لـ Claude و Cursor",
-    speak_customer: "هل تحدثت مع عميل حقيقي واحد محتمل على الأقل حول هذه الفكرة؟",
-    yes_spoken: "نعم، لقد فعلت ذلك",
-    not_yet: "ليس بعد",
-    warning_spoken: "⚠ لا توجد محادثات حقيقية = افتراضات غير مؤكدة. سيستمر توليد التقارير ولكن تعامل معها كفرضيات وليست حقائق. خطوتك الأولى والأساسية بعد هذا: تحدث إلى شخص حقيقي واحد.",
-    running_reality: "جاري تشغيل مواجهة الواقع…",
-    reality_complete: "اكتملت مواجهة الواقع",
-    build_outputs: "إنشاء المخرجات والتقارير ←",
-    drop_idea_label: "ضع فكرتك الخام هنا",
-    idea_placeholder: "لا حاجة للصقل الآن. الأفكار غير المكتملة مقبولة تماماً.\nفي الفوضى والمسودات الخام تولد وتعيش أفضل الأفكار.",
-    ignite_btn: "إشعال الفكرة ←",
-    loading: "جاري التحميل...",
-    core_deliverables_title: "نقاط التحقق من المخرجات الأساسية",
-    advanced_venture_title: "مخرجات المشروع المتقدمة",
-    deeper_strategic_analytics: "تحليلات استراتيجية أعمق",
-    collapse: "طي",
-    expand: "توسيع"
-  },
-};
-
-function t(key: string, lang = "en"): string {
-  const langKeyMap: Record<string, string> = {
-    en: "English",
-    sw: "Kiswahili",
-    es: "Español",
-    fr: "Français",
-    de: "Deutsch",
-    ar: "العربية"
-  };
-  const uiKey = langKeyMap[lang] || lang;
-  const dict = UI_TRANSLATIONS[uiKey] || UI_TRANSLATIONS["English"];
-  return dict[key] || UI_TRANSLATIONS["English"][key] || key;
-}
-
 const ctxStr = pairs => pairs.map((x, i) => `Q${i + 1}: ${x.question}\nA${i + 1}: ${x.answer}`).join("\n\n");
 
 // ── SIGNATURE HALLMARK WAX SEAL ──────────────────────────
@@ -2107,6 +1623,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("forge_app_language", appLanguage);
+    i18n.changeLanguage(appLanguage);
   }, [appLanguage]);
 
   // Click outside language selector to close it
@@ -2154,7 +1671,7 @@ export default function App() {
     const addScript = document.createElement("script");
     addScript.id = "google-translate-script";
     addScript.setAttribute("type", "text/javascript");
-    addScript.setAttribute("src", "//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit");
+    addScript.setAttribute("src", "https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit");
     document.body.appendChild(addScript);
   }, []);
 
@@ -2162,9 +1679,9 @@ export default function App() {
     localStorage.setItem("forge_app_language", langCode);
     setAppLanguage(langCode);
 
-    // Set translation cookie recognized by Google Translate
-    document.cookie = `googtrans=/en/${langCode}; path=/`;
-    document.cookie = `googtrans=/en/${langCode}; domain=${window.location.hostname}; path=/`;
+    // Set translation cookie recognized by Google Translate (with SameSite=None; Secure for within iframe compatibility)
+    document.cookie = `googtrans=/en/${langCode}; path=/; SameSite=None; Secure`;
+    document.cookie = `googtrans=/en/${langCode}; domain=${window.location.hostname}; path=/; SameSite=None; Secure`;
 
     // Try setting the dropdown value directly
     const changeWidget = () => {
@@ -2251,6 +1768,36 @@ export default function App() {
   const [outputs, setOutputs] = useState({});
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
+
+  // Google Translate state synchronizer: triggers on view re-renders or language alterations
+  useEffect(() => {
+    if (appLanguage === "en") {
+      document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+      document.cookie = `googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=${window.location.hostname}; path=/;`;
+    } else {
+      document.cookie = `googtrans=/en/${appLanguage}; path=/; SameSite=None; Secure`;
+      document.cookie = `googtrans=/en/${appLanguage}; domain=${window.location.hostname}; path=/; SameSite=None; Secure`;
+    }
+
+    const reapplyTranslation = () => {
+      const select = document.querySelector(".goog-te-combo") as HTMLSelectElement;
+      if (select && select.value !== appLanguage) {
+        select.value = appLanguage;
+        select.dispatchEvent(new Event("change"));
+      }
+    };
+
+    reapplyTranslation();
+    const t1 = setTimeout(reapplyTranslation, 250);
+    const t2 = setTimeout(reapplyTranslation, 800);
+    const t3 = setTimeout(reapplyTranslation, 2000);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [appLanguage, phase, outType]);
 
   useEffect(() => {
     try {
@@ -3352,11 +2899,15 @@ ${ctxStr(pairs)}`;
         {phase === "output-select" && (
           <div style={{ animation: "fadeIn .3s ease" }}>
             {ideaScore && (
-              <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.1rem 1.3rem", marginBottom: "1.8rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "0.7rem" }}>
-                  <div style={{ fontSize: "2rem", fontWeight: "900", color: scoreColor(ideaScore.score), lineHeight: 1, fontFamily: "monospace" }}>{ideaScore.score}%</div>
-                  <div style={{ flex: 1 }}><div style={{ color: scoreColor(ideaScore.score), fontSize: "0.63rem", letterSpacing: "2px", fontWeight: "bold", fontFamily: "monospace" }}>{(ideaScore.label || "").toUpperCase()}</div><div style={{ color: "rgba(255,255,255,0.78)", fontSize: "0.76rem", marginTop: "4px", lineHeight: "1.5", fontFamily: "monospace" }}>{ideaScore.verdict}</div></div>
-                  <div style={{ width: "46px", height: "46px", borderRadius: "50%", background: "#050505", border: "1px solid #1c1c1c", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: LIME, textAlign: "center", lineHeight: "1.3", fontFamily: "monospace", fontWeight: "bold" }}>SYS<br />SCORE</div>
+              <div style={{ background: "#090909", border: "1px solid #1c1c1c", borderRadius: "6px", padding: "1.2rem 1.4rem", marginBottom: "1.8rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>
+                  <div style={{ flexShrink: 0 }}>
+                    <Speedometer score={ideaScore.score} label={t("concept_score", appLanguage)} size={115} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: "220px" }}>
+                    <div style={{ color: scoreColor(ideaScore.score), fontSize: "0.68rem", letterSpacing: "2.5px", fontWeight: "bold", fontFamily: "monospace" }}>{(ideaScore.label || "").toUpperCase()}</div>
+                    <div style={{ color: "rgba(255,255,255,0.78)", fontSize: "0.8rem", marginTop: "6px", lineHeight: "1.5", fontFamily: "monospace" }}>{ideaScore.verdict}</div>
+                  </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.9rem", borderTop: "1px solid #1c1c1c", paddingTop: "0.85rem", marginTop: "0.85rem", fontFamily: "monospace" }}>
                   <div><div style={{ color: PURPLE, fontSize: "9px", letterSpacing: "2px", marginBottom: "0.35rem", fontWeight: "bold" }}>STRENGTHS</div>{(ideaScore.strengths || []).map((s, i) => <div key={i} style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.76rem", marginBottom: "0.18rem" }}>→ {s}</div>)}</div>
